@@ -84,7 +84,8 @@ export function estimateInputTokens(processedMessages: CoreMessage[], systemText
     // starves the output clamp as they accumulate. This matches the preflight
     // trigger and outbound metering, both of which compute max(baseline, est +
     // reserve). Applied after calibration so the text k̂ never deflates the
-    // separately-learned image cost (#1843 L1).
+    // separately-learned image cost (#1843 L1). #2391's deferred-tool tokens ride
+    // INSIDE the calibrated arm instead — they are JSON payload text.
     const est = applyEstimateCalibration(estimateCoreMessages(processedMessages) + countSystemAndToolsTokens(systemText, tools) + loadedToolTokens, kFactor, kOrigin, origin) + imageTokens;
     const baseline = lastInputTokens > 0 && lastInputTokensSource === "usage" ? lastInputTokens : 0;
     return Math.max(baseline, est);

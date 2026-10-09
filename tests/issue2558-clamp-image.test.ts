@@ -17,7 +17,13 @@ process.env.NODE_ENV = "test";
 // max(baseline, est + reserve) — only the clamp deviated. Fix: move the image
 // reserve onto the local-est arm inside estimateInputTokens, so a usage-grade
 // baseline is never re-charged and the est arm (text-only estimateCoreMessages)
-// still carries its images (#488 overflow guarantee preserved).
+ // still carries its images (#488 overflow guarantee preserved).
+//
+// Signature note (#2391 rebase): estimateInputTokens takes loadedToolTokens as
+// its 9th positional param and imageTokens as 10th. The direct calls below pass
+// an explicit 0 for the tool slot so the reserve lands on the IMAGE param —
+// pre-#2391 the reserve was the 9th arg, and a naive rebase would silently test
+// the wrong parameter (still green under identity calibration).
 
 import { clampOutputBudget, clampOutgoingOutput, estimateInputTokens } from "../src/server/budget.ts";
 import { readOutputBudget } from "../src/server/side-request.ts";
@@ -46,7 +52,7 @@ test("#2558: the local-est arm STILL carries the image reserve when it outgrows 
 test("#2558: absent source / zero baseline behaves exactly as before (reserve unchanged)", () => {
     const sys = "x".repeat(40_000);
     const noSource = estimateInputTokens([], sys, [], 0);
-    const noSourceWithReserve = estimateInputTokens([], sys, [], 0, undefined, undefined, undefined, undefined, 7_000);
+    const noSourceWithReserve = estimateInputTokens([], sys, [], 0, undefined, undefined, undefined, undefined, 0, 7_000);
     assert.equal(noSourceWithReserve, noSource + 7_000, "est-only path still adds the reserve");
 });
 
