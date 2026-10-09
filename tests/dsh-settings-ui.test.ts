@@ -860,6 +860,67 @@ test("#1809/#2125/#2187: client polls /bili/origin while unresolved — upgrades
         assert.ok(cleared >= 1, "the pending retry is cancelled on unmount");
         assert.equal(pending.length, 0, "no timers survive unmount");
     }
+
+    {
+        // #2559: the host page's actual ground drives the face's palette.
+        // A dark ground pins &theme=dark ALREADY ON FIRST PAINT (synchronous
+        // sample — fed here through the __BILI__ origin snapshot so no probe
+        // round-trip stands between render and frame) and a light ground pins
+        // &theme=light; unpinned sandboxes (all earlier scenarios) keep the
+        // old exact srcs above, proving a DOM-less host stays OS-driven.
+        const mkDom = (bg: string): Record<string, unknown> => ({
+            __BILI__: { origin: "http://127.0.0.1:9998" },
+            document: {
+                documentElement: {},
+                body: { querySelector: (_sel: string): unknown => undefined },
+            },
+            getComputedStyle: (_el: unknown): unknown => ({ backgroundColor: bg }),
+        });
+        for (const [bg, theme] of [
+            ["rgb(13,17,23)", "dark"],
+            ["rgba(22,27,34,0.98)", "dark"],
+            ["rgb(247,248,250)", "light"],
+        ] as Array<[string, string]>) {
+            const m = mount({
+                fetch: async () => ({ ok: true, json: async () => ({ origin: "http://127.0.0.1:9998" }) }),
+                setTimeout,
+                clearTimeout,
+                ...mkDom(bg),
+            });
+            m.resetHooks();
+            const painted = m.component() as ElementNode;
+            const frame = findTag(painted, "iframe");
+            assert.ok(frame !== undefined, `ground ${bg} still upgrades on first paint`);
+            assert.equal(
+                frame.props?.src,
+                `http://127.0.0.1:9998/__bili/?embed=1&lang=zh&theme=${theme}#/overview`,
+                `ground ${bg} classifies ${theme} on the very first paint`,
+            );
+            m.runCleanups();
+        }
+    }
+});
+
+test("#2559: explicit host theme pin overrides the OS palette; #2560 embed frame padding", () => {
+    // A framed document only sees the browser/OS color-scheme, while dsh's
+    // dark theme is app-level — the host client samples its real ground and
+    // pins the face via ?theme= (renderPage → <html data-theme=…>). An
+    // explicit pin must OUTRANK the media query, so the OS-driven block
+    // narrows to :not([data-theme]) while the pinned palette repeats it.
+    const styles = fs.readFileSync(new URL("../src/web/styles.ts", import.meta.url), "utf8");
+    assert.ok(
+        styles.includes("@media (prefers-color-scheme: dark) {\n    :root:not([data-theme]) {"),
+        "the OS-driven dark palette stays out of explicitly pinned documents",
+    );
+    assert.ok(styles.includes(':root[data-theme="dark"] {'), "an explicit dark pin carries the full dark palette");
+    assert.ok(
+        styles.includes(':root[data-theme="light"] {\n    color-scheme: light;\n}'),
+        "an explicit light pin rebinds the canvas over a dark OS",
+    );
+    assert.ok(
+        styles.includes(".embed main { max-width: none; padding: 8px 10px 16px; }"),
+        "the embed face keeps a breathing gutter around the frame edge",
+    );
 });
 
 test("#2125: the manifest declares no dsh.client.inject (pre-0.2 dsh compat)", () => {

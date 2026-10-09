@@ -26,8 +26,14 @@ export const WEB_STYLES = String.raw`
     --radius: 10px;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
+/* #2559: an embedding host can pin the face explicitly (?theme=light|dark →
+   <html data-theme=…>) because a host APP-level theme is invisible to the
+   framed document's prefers-color-scheme. An explicit pin outranks the OS
+   signal, so the media query below is narrowed to documents WITHOUT one;
+   the pinned palette repeats the same list (CSS cannot share declarations
+   across media boundaries — keep the two lists in sync). */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme]) {
         --bg: #0d1117;
         --bg-elev: #161b22;
         --bg-muted: #1c2129;
@@ -47,6 +53,30 @@ export const WEB_STYLES = String.raw`
         --purple: #a371f7;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --bg-elev: #161b22;
+    --bg-muted: #1c2129;
+    --border: #30363d;
+    --border-soft: #21262d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --text-faint: #6e7681;
+    --accent: #4493f8;
+    --accent-soft: rgba(68, 147, 248, 0.14);
+    --green: #3fb950;
+    --green-soft: rgba(63, 185, 80, 0.14);
+    --red: #f85149;
+    --red-soft: rgba(248, 81, 46, 0.12);
+    --amber: #d29922;
+    --amber-soft: rgba(210, 153, 34, 0.14);
+    --purple: #a371f7;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="light"] {
+    color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -386,6 +416,8 @@ pre.tool-args, pre.tool-out { margin: 6px 0 0; padding: 8px; background: var(--b
    collapses and rows render double-exposed. */
 .embed table.data colgroup col:nth-child(n + 6) { width: 0 !important; }
 .embed .twide table.data th, .embed .twide table.data td { padding-left: 5px; padding-right: 5px; }
-.embed main { max-width: none; padding: 4px 0 12px; }
+/* #2560: the frame hugs its edges hard at narrow panel widths — give the
+   embed face a little breathing room instead of zero gutter. */
+.embed main { max-width: none; padding: 8px 10px 16px; }
 .embed .banner { margin: 8px 0 0; }
 `;
