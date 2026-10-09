@@ -77,8 +77,15 @@ export function countSystemAndToolsTokens(systemText: string | undefined, tools:
  *  raw chars/4 est ~137K vs provider-billed ~81K) used to win the max() raw
  *  and starve the output clamp (32768 -> 3357 with ample actual headroom).
  *  The usage-grade baseline is already provider-measured and is NEVER scaled. */
-export function estimateInputTokens(processedMessages: CoreMessage[], systemText: string | undefined, tools: unknown, lastInputTokens: number, lastInputTokensSource?: string, kFactor?: number, kOrigin?: string, origin?: string, loadedToolTokens = 0): number {
-    const est = applyEstimateCalibration(estimateCoreMessages(processedMessages) + countSystemAndToolsTokens(systemText, tools) + loadedToolTokens, kFactor, kOrigin, origin);
+export function estimateInputTokens(processedMessages: CoreMessage[], systemText: string | undefined, tools: unknown, lastInputTokens: number, lastInputTokensSource?: string, kFactor?: number, kOrigin?: string, origin?: string, loadedToolTokens = 0, imageTokens = 0): number {
+    // #2558: price the image reserve onto the LOCAL-EST arm only. A usage-grade
+    // baseline is the provider-reported input total, which already bills those
+    // same images (#488) — adding the reserve to it double-counts every image and
+    // starves the output clamp as they accumulate. This matches the preflight
+    // trigger and outbound metering, both of which compute max(baseline, est +
+    // reserve). Applied after calibration so the text k̂ never deflates the
+    // separately-learned image cost (#1843 L1).
+    const est = applyEstimateCalibration(estimateCoreMessages(processedMessages) + countSystemAndToolsTokens(systemText, tools) + loadedToolTokens, kFactor, kOrigin, origin) + imageTokens;
     const baseline = lastInputTokens > 0 && lastInputTokensSource === "usage" ? lastInputTokens : 0;
     return Math.max(baseline, est);
 }
@@ -279,10 +286,13 @@ export function clampOutgoingOutput(
 ): void {
     const raw = readOutputBudget(rebuilt, field);
     if (typeof raw !== "number") return;
-    // #488: images ride along in the rebuilt body but are invisible to the text model —
-    // without them the cap is too generous and input+output can still overflow.
+    // #488/#2558: images ride along in the rebuilt body but are invisible to the text
+    // model — without them the cap is too generous and input+output can still overflow.
+    // estimateInputTokens prices them onto the local-est arm only (a usage-grade baseline
+    // already bills them), so the clamp judges the payload on the same max(baseline, est +
+    // reserve) caliber as preflight/metering instead of double-counting every image.
     const loadedToolTokens = field === "max_output_tokens" ? countLoadedToolTokens(rebuilt) : 0;
-    const inputEstimate = estimateInputTokens(ctx.processedMessages, ctx.systemText, ctx.tools, ctx.lastInputTokens, ctx.lastInputTokensSource, ctx.kFactor, ctx.kOrigin, ctx.origin, loadedToolTokens) + ctx.imageTokens;
+    const inputEstimate = estimateInputTokens(ctx.processedMessages, ctx.systemText, ctx.tools, ctx.lastInputTokens, ctx.lastInputTokensSource, ctx.kFactor, ctx.kOrigin, ctx.origin, loadedToolTokens, ctx.imageTokens);
     const capped = clampOutputBudget(raw, inputEstimate, ctx.nativeWindow);
     if (capped !== undefined) {
         writeOutputBudget(rebuilt, field, capped);
