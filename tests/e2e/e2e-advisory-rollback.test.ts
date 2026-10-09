@@ -30,7 +30,7 @@ const run = process.env.ACP_TEST_REGISTRY === "1";
 const skipReason = !run ? "set ACP_TEST_REGISTRY=1 (hermetic local-registry e2e; loopback only)" : undefined;
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-const PKG = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { name: string; version: string; files: string[] };
+const PKG = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { name: string; version: string; files: string[]; scripts?: Record<string, string> };
 
 // Version choreography (all published to the local registry as real
 // tarballs of THIS build):
@@ -94,15 +94,17 @@ async function makeFixtureTarball(work: string, version: string): Promise<string
     fs.mkdirSync(packs, { recursive: true });
     const stage = path.join(work, "fixtures", version);
     fs.mkdirSync(stage, { recursive: true });
-    fs.writeFileSync(path.join(stage, "package.json"), `${JSON.stringify({ ...PKG, version }, null, 2)}\n`);
+    // The staged copy models a PUBLISHED artifact: registry installs never run
+    // prepare, and scripts/ is outside `files`, so drop the hook referencing
+    // the non-shipped guard script (#2471).
+    fs.writeFileSync(
+        path.join(stage, "package.json"),
+        `${JSON.stringify({ ...PKG, version, scripts: Object.fromEntries(Object.entries(PKG.scripts ?? {}).filter(([name]) => name !== "prepare")) }, null, 2)}\n`,
+    );
     for (const entry of PKG.files) {
         const src = path.join(REPO_ROOT, entry);
         if (fs.existsSync(src)) await fs.promises.cp(src, path.join(stage, entry), { recursive: true });
     }
-    // `prepare` runs while npm packs this stage; scripts/ is not part of
-    // `files` (the tarball stays identical to a real publish) but must be
-    // present for it to execute (#2471).
-    await fs.promises.cp(path.join(REPO_ROOT, "scripts"), path.join(stage, "scripts"), { recursive: true });
     const home = path.join(work, "home-pkg");
     fs.mkdirSync(home, { recursive: true });
     const listing = packTarball(stage, packs, home);
