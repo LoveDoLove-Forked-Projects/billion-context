@@ -129,6 +129,12 @@ export function emitStreamError(res: http.ServerResponse, protocol: Protocol, me
  *    mirror-image property: its terminal event IS the finishReason chunk, so
  *    finished=true leaves nothing to synthesize (and finished=false is the
  *    only reachable case from a pipe that treats that chunk as terminal).
+ *  - transparent=true (finished=false only): #2563 host-owned handling — the
+ *    session's plugin host is on the evidence permitlist of hosts proven to
+ *    classify a bare truncated SSE as a transient failure they retry
+ *    themselves. No frame is synthesized; the partial stream ends clean so
+ *    the host's native classifier decides. The diag still rides the log line
+ *    (it just does not reach the wire).
  * Never throws.
  */
 /** #2328 Q2: termination diagnostics carried on the in-band truncation
@@ -176,11 +182,11 @@ export interface TruncationDiag {
     upstreamContentType?: string;
 }
 
-export function emitUpstreamTruncation(res: http.ServerResponse, protocol: Protocol, finished: boolean, log?: (msg: string) => void, diag?: TruncationDiag): void {
+export function emitUpstreamTruncation(res: http.ServerResponse, protocol: Protocol, finished: boolean, log?: (msg: string) => void, diag?: TruncationDiag, transparent = false): void {
     const message = "upstream stream ended before a completion event; this turn may be incomplete";
     const action = finished
         ? protocol === "google" ? "finish reason already delivered, stream complete" : "finish reason seen, synthesizing missing terminal byte"
-        : "emitting in-band error";
+        : transparent ? "passing through raw (host owns truncation handling, #2563)" : "emitting in-band error";
     // #2328: the diag blob rides the log line too — one grep for
     // `upstream stream truncated` pulls the full classification + counters
     // without needing the client-side error frame.
@@ -189,7 +195,11 @@ export function emitUpstreamTruncation(res: http.ServerResponse, protocol: Proto
     // Wire-shape change (new field on an error-only frame) — human-merge item.
     const metaField = diag === undefined ? {} : { meta: diag };
     try {
-        if (protocol === "openai") {
+        if (transparent && !finished) {
+            // #2563: host-owned handling — deliver exactly what arrived
+            // (clean end, nothing synthesized) and let the host's native
+            // classifier take over.
+        } else if (protocol === "openai") {
             if (finished) {
                 safeWrite(res, "data: [DONE]\n\n");
             } else {

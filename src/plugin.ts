@@ -1798,6 +1798,22 @@ const CLEAN_TURN_REASONS = new Set(["stop", "end_turn", "stop_sequence"]);
 
 const ANTHROPIC_BLOCK_EVENT = /^content_block_(start|delta|stop)$/;
 
+/** #2563: hosts whose native layer owns mid-stream truncation handling —
+ *  bili ends the stream raw (nothing synthesized) and lets the host's own
+ *  classifier + retry budget take over instead of digesting the cut into a
+ *  non-retryable in-band error (#721). Evidence-permitlist, KDD-#9
+ *  discipline: pi is proven (local repro — bare pi classifies a truncated
+ *  SSE as transient and re-issues the turn; bili's in-band wording fell
+ *  outside its transient table so every cut surfaced as a hard error).
+ *  dsh/opencode/codex host-side handling is unverified → they keep the
+ *  legacy in-band signal until traffic evidence says otherwise. */
+const TRANSPARENT_TRUNCATION_AGENTS = new Set(["pi"]);
+
+export function transparentTruncationApplies(session?: Session): boolean {
+    const agent = session?.metadata?.pluginAgent;
+    return typeof agent === "string" && TRANSPARENT_TRUNCATION_AGENTS.has(agent);
+}
+
 /** Plugin-mode streaming passthrough for the OpenAI chat-completions and
  *  Anthropic wires: forward upstream events byte-identical (the agent's
  *  native tool loop must see the model's tool calls untouched) while (a)
@@ -2755,7 +2771,11 @@ export async function pipePluginChatWithStrip(
         maybeSummarizeStrips();
         settleWitnesses();
         if (truncated) {
-            emitUpstreamTruncation(res, protocol, finalFinishReason !== undefined, log, buildTruncationDiag("eof"));
+            // #721 → #2563: the client still owns the stream from here.
+            // Permitlist hosts (pi) get the raw cut — their native layer
+            // classifies it as transient and retries; everyone else gets the
+            // in-band truncation signal.
+            emitUpstreamTruncation(res, protocol, finalFinishReason !== undefined, log, buildTruncationDiag("eof"), transparentTruncationApplies(session));
             return;
         }
     } catch (e) {
@@ -2779,8 +2799,8 @@ export async function pipePluginChatWithStrip(
         } catch {
             /* client half-gone; the emission below is best-effort too */
         }
-        loggerLog("warn", `[plugin] upstream stream read failed (${protocol}): ${String(e instanceof Error ? e.message : e)} — emitting in-band truncation signal`);
-        emitUpstreamTruncation(res, protocol, finalFinishReason !== undefined, log, buildTruncationDiag("read-error"));
+        loggerLog("warn", `[plugin] upstream stream read failed (${protocol}): ${String(e instanceof Error ? e.message : e)} — truncation signal path`);
+        emitUpstreamTruncation(res, protocol, finalFinishReason !== undefined, log, buildTruncationDiag("read-error"), transparentTruncationApplies(session));
         return;
     } finally {
         reader.releaseLock();
@@ -3525,11 +3545,11 @@ export async function pipePluginResponsesWithStrip(
         maybeSummarizeStrips();
         settleUsage();
         settleWitnesses();
-        // #721: same as the chat-pipe twin — never close bare on a missing
-        // done-family event. Responses has no separate finish-reason concept
-        // (terminal events carry the status), so this is always the error shape.
+        // #721 → #2563: never leave the stream hanging on a missing done-family
+        // event. Permitlist hosts (pi) get the raw cut for their native
+        // classifier; everyone else gets the in-band error frame.
         if (!sawTerminal && !res.destroyed && !res.writableEnded) {
-            emitUpstreamTruncation(res, "responses", false, log, buildTruncationDiag("eof"));
+            emitUpstreamTruncation(res, "responses", false, log, buildTruncationDiag("eof"), transparentTruncationApplies(session));
             return;
         }
     } catch (e) {
@@ -3550,8 +3570,8 @@ export async function pipePluginResponsesWithStrip(
         } catch {
             /* client half-gone; the emission below is best-effort too */
         }
-        loggerLog("warn", `[plugin] upstream stream read failed (responses): ${String(e instanceof Error ? e.message : e)} — emitting in-band truncation signal`);
-        emitUpstreamTruncation(res, "responses", false, log, buildTruncationDiag("read-error"));
+        loggerLog("warn", `[plugin] upstream stream read failed (responses): ${String(e instanceof Error ? e.message : e)} — truncation signal path`);
+        emitUpstreamTruncation(res, "responses", false, log, buildTruncationDiag("read-error"), transparentTruncationApplies(session));
         return;
     } finally {
         reader.releaseLock();

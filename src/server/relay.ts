@@ -940,8 +940,9 @@ export async function forward(
         const wireBodyText = typeof wireBody === "string" ? wireBody : wireBody.toString("utf8");
         // #411: clear the idle timer on every path — resolveFakeCompletion and
         // other failures still escape these pipes; without a finally each one
-        // leaked a live idle timer. (#721: the SSE pipes themselves no longer
-        // rethrow an upstream cut — they emit an in-band truncation signal.)
+        // leaked a live idle timer. (#721/#2563: the SSE pipes themselves no
+        // longer rethrow an upstream cut — they emit an in-band truncation
+        // signal, or end raw for permitlist hosts that own the handling.)
         try {
             let pluginBody = upstream.body as ReadableStream<Uint8Array>;
             if (prepared.stream && maxFakeCompletionRetries() > 0) {
