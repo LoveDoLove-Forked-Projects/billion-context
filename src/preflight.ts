@@ -23,6 +23,7 @@ import { applyEstimateCalibration, currentCalibrationFactor } from "./util.js";
 import { configuredSummaryPlan, type ConfiguredSummaryPlan } from "./external-summary-runtime.js";
 import type { ExternalSummaryBatchResult } from "./external-summary.js";
 import type { ResolvedKernelConfig } from "./compress-settings.js";
+import { newExternalCallId } from "./external-summary-marker.js";
 
 // #247: proactive pre-forward compression. When the session's real context
 // (previous turn's upstream input_tokens) exceeds the current model's window
@@ -178,6 +179,8 @@ export interface PreflightDeps {
     config: Config;
     /** Best-effort target below the hard window; never relax recent protection for headroom alone. */
     compressionTarget?: number;
+    /** Display-only: why this walk runs — "growth" (auto-fold floor) vs "overflow" (window). Labels the applied blocks' topic so panels/logs can tell auto-folds from emergency folds. */
+    compressReason?: "growth" | "overflow";
     prompts: Prompts;
     surface?: PackSurface;
     protocol: PreflightProtocol;
@@ -228,7 +231,7 @@ interface PreflightFailure {
 // unusable branch carries a diagnosis of what the body actually contained so
 // it is logged and surfaced in the fail-fast message instead of the generic
 // "summary too short".
-type SummaryOutcome = { summary: string } | { unusable: string; transient?: boolean };
+type SummaryOutcome = { summary: string; external?: boolean } | { unusable: string; transient?: boolean; external?: never };
 
 export interface PreflightResult {
     compressedRanges: number;
@@ -904,7 +907,11 @@ async function summarizeRange(deps: PreflightDeps, content: string, startRef: st
         const batch = await deps.externalSummary.summarize([{ instructions: system, content, minSummaryChars: MIN_SUMMARY_CHARS,
             maxSummaryChars: deps.config.compress.maxSummaryLength }], deps.signal);
         const result = batch.results[0];
-        return result?.status === "success" ? { summary: result.summary }
+        // Observability parity with the model-tool path (external-summary-compress
+        // logs "[external-summary] completed" there): this path used to be fully
+        // silent on success, which made executor attribution impossible from logs.
+        deps.log("info", `[external-summary] completed (preflight) 1/1 range(s); ${describeExternalSummaryFailure(batch)}`);
+        return result?.status === "success" ? { summary: result.summary, external: true }
             : { unusable: describeExternalSummaryFailure(batch), transient: false };
     }
     // #626: the session remembers upstreams that require stream:true, so the
@@ -1624,6 +1631,10 @@ export async function preflightCompress(deps: PreflightDeps, messages: CoreMessa
                 }
                 let summary: string | null = null;
                 let outcome: SummaryOutcome | undefined;
+                // Any-part external flag: chunked folds assemble one block from
+                // several summarizeRange parts, so the marker must survive the
+                // assembly (it tags the applied block, not the individual calls).
+                let externalFold = false;
                 // #2383: hoisted out of the LLM path below — the emergency digest
                 // branch needs the span's mass for its net-shrink bound before any
                 // summary exists; units match the post-fold accounting.
@@ -1680,6 +1691,7 @@ export async function preflightCompress(deps: PreflightDeps, messages: CoreMessa
                                 outcome = part;
                                 break;
                             }
+                            if (part.external) externalFold = true;
                             parts.push(part.summary);
                         }
                         if (!budgetHit && !outcome && parts.length === chunks.length) {
@@ -1805,7 +1817,13 @@ export async function preflightCompress(deps: PreflightDeps, messages: CoreMessa
                 };
                 const creditBefore = deps.session.stats.compressCreditTokens;
                 // #2146: internal lane — must not arm the model-facing loop breaker.
-                const applied = applyRanges(parseCompressInput({ content: [{ startId: startRef, endId: endRef, summary, topic: "preflight overflow compress" }] }), ctx, { loopTracking: false });
+                const fold = parseCompressInput({ content: [{ startId: startRef, endId: endRef, summary, topic: deps.compressReason === "growth" ? "preflight auto-fold (growth)" : "preflight overflow compress" }] });
+                // Tag external-chain folds so display surfaces (panel ⚡ext, web
+                // session detail) can tell them apart from model-written summaries;
+                // the kernel only parses compressCallId from the tool-call id, so we
+                // attach the marker after parsing (same as the tool path does).
+                if (outcome?.external || externalFold) for (const range of fold.ranges) range.compressCallId = newExternalCallId();
+                const applied = applyRanges(fold, ctx, { loopTracking: false });
                 if (applied.outcome === "refused") {
                     deps.log("warn", `[preflight] ${applied.text}`);
                     noteSkip(`${skipKey}: apply failed — ${safePrefix(applied.text.replace(/^\[Compression FAILED[:\s]*/, ""), 200)}`);

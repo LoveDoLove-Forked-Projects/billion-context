@@ -11,6 +11,40 @@ export function externalSummaryEnabled(config: unknown): boolean {
     return (config as ResolvedKernelConfig | undefined)?.externalSummary?.enabled === true;
 }
 
+/** [#autoFold] Growth folding is active for a request when the rail carries
+ *  an ENABLED external chain that switched autoFold on. An unresolvable
+ *  target collapses the chain to enabled=false (expandExternalSummaryChain
+ *  -Tolerant), so this flips false and classic nudges come back — the
+ *  fail-open path. */
+export function autoFoldActive(config: unknown): boolean {
+    const ext = (config as ResolvedKernelConfig | undefined)?.externalSummary;
+    return ext?.enabled === true && ext.autoFold === true;
+}
+
+/** [#autoFold] Backoff: when a growth-armed fold cannot reach its target
+ *  (external chain down), pausing auto-fold for a while restores BOTH the
+ *  classic overflow-only preflight AND the wire nudges — without this, a
+ *  dead chain would leave the session with no compression channel at all
+ *  (nudges suppressed, folds failing). Structural session type keeps this
+ *  module import-leaf clean. */
+export const AUTO_FOLD_BACKOFF_MS = 10 * 60_000;
+
+export function autoFoldBackoffActive(session: { metadata?: Record<string, unknown> } | undefined): boolean {
+    const until = session?.metadata?.autoFoldBackoffUntil;
+    return typeof until === "number" && until > Date.now();
+}
+
+export function armAutoFoldBackoff(session: { metadata?: Record<string, unknown> } | undefined): void {
+    if (!session) return;
+    (session.metadata ?? (session.metadata = {})).autoFoldBackoffUntil = Date.now() + AUTO_FOLD_BACKOFF_MS;
+}
+
+/** Nudge suppression + growth trigger share this gate: auto-fold is only
+ *  "engaged" while the chain is on AND not in backoff. */
+export function autoFoldEngaged(config: unknown, session: { metadata?: Record<string, unknown> } | undefined): boolean {
+    return autoFoldActive(config) && !autoFoldBackoffActive(session);
+}
+
 function adaptSchema(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(adaptSchema);
     if (!value || typeof value !== "object") return value;

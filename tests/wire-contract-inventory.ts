@@ -150,8 +150,10 @@ function captureManifest(config: Parameters<typeof handlePluginManifest>[1]): Re
     handlePluginManifest(res, config);
     const doc = JSON.parse(String(raw)) as Record<string, unknown>;
     // package.json version changes on every release commit; pin it so the
-    // golden only tracks schema content, not the release counter.
+    // golden only tracks schema content, not the release counter. Same for
+    // the build commit (per-checkout, "unknown" in exotic envs).
     doc.version = "<VERSION>";
+    if (typeof doc.commit === "string") doc.commit = "<COMMIT>";
     return doc;
 }
 

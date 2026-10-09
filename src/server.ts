@@ -6,7 +6,7 @@ import tls from "node:tls";
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { createCore, type CompressionCore, type CompressionState, type Config, type CoreMessage, type NudgeDecision, type Prompts, type PackSurface, defaultPrompts, deactivateBlock } from "acp-kernel";
-import { DEFAULT_STRIP_IMAGES_KEEP_RECENT, resolveCompress, resolveCompressPrompts, resolveCompressSurfaceDetailed, resolveRequestConfig } from "./compress-settings.js";
+import { DEFAULT_STRIP_IMAGES_KEEP_RECENT, resolveCompress, resolveCompressPrompts, resolveCompressSurfaceDetailed, resolveRequestConfig, type ResolvedKernelConfig } from "./compress-settings.js";
 import { dropCompressReasoning, type CompressReasoningConfig } from "./reasoning-drop.js";
 import type { ProxyOptions, ResignSettings } from "./config.js";
 export type { ProxyOptions } from "./config.js";
@@ -79,7 +79,7 @@ import { buildIncomingImageIndex, foldAnchoredCutoff, pruneRetrieveImgExports } 
 import { imageCompressionEnabled, storeEffectiveImageCompression, type ImageCompressionSettings } from "./image-compress.js";
 import { rulesEnabled, storeEffectiveRules } from "./rules-feature.js";
 import { storeEffectiveSearchPlanAware } from "./decompress-shared.js";
-import { withExternalSummaryTools } from "./external-summary-surface.js";
+import { armAutoFoldBackoff, autoFoldEngaged, AUTO_FOLD_BACKOFF_MS, withExternalSummaryTools } from "./external-summary-surface.js";
 import { applyRanges } from "./stream.js";
 import { attachSubagentSessions } from "./subagent-sessions.js";
 import { buildSessionCacheReport, handleAcpCache, learnedImageReserve, noteClientAbort, readKeySwitchStats, readModelSwitchStats, settleUsageReport } from "./cache-ledger.js";
@@ -2372,9 +2372,26 @@ export async function preflightCompressIfNeeded(
 ): Promise<Prepared | PreflightFailFast> {
     const session = prepared.session;
     const limit = config.modelContextLimit;
-    const compressionTarget = prepared.protocol === "responses" && isCodexClient(req.headers) && codexCompactMode() === "intercept"
+    const overflowTarget = prepared.protocol === "responses" && isCodexClient(req.headers) && codexCompactMode() === "intercept"
         ? limit * CODEX_COMPACT_HEALTH_RATIO
         : limit;
+    // [#autoFold] Growth folding: with externalSummary.autoFold on (and the
+    // chain resolvable — an unresolvable target collapses the rail to
+    // enabled=false), the operator asked for a LEAN context, not just a
+    // fitting one: lower the walk target from the window to the growth
+    // floor so the SAME preflight machinery (external chain, kernel-chosen
+    // ranges, zero model involvement) folds at the nudge-arm point instead
+    // of only at overflow. The model never sees a nudge (the wire prepare
+    // suppresses injection while autoFold is active) and never drafts
+    // compression plans. Fail-open rule: every FAIL-FAST below is an
+    // overflow concept — a growth-armed payload still fits the real window,
+    // so failures forward as-is instead of refusing the request.
+    const autoFoldOn = autoFoldEngaged(config, session);
+    const autoFoldTarget = autoFoldOn
+        ? Math.min((config as ResolvedKernelConfig).externalSummary?.autoFoldTargetTokens ?? (overflowTarget > 0 ? Math.round(overflowTarget / 2) : 0), overflowTarget)
+        : undefined;
+    const growthArmed = autoFoldTarget !== undefined && autoFoldTarget > 0 && autoFoldTarget < overflowTarget;
+    const compressionTarget = growthArmed ? autoFoldTarget : overflowTarget;
     // A fresh session (id rotated, e.g. after a model switch) has
     // lastInputTokens = 0 while still carrying a full raw history; size the
     // trigger on the real post-fold payload too. outboundPayloadBreakdown is the
@@ -2478,7 +2495,10 @@ export async function preflightCompressIfNeeded(
     // arbitration to the estimate channel. Fresh sessions
     // (lastInputTokens <= 0 / unknownBaseline #553) keep the fold-first
     // judgment — they hold no known-wrong meter to replace.
-    const probeForEvidence = !unknownBaseline && session.stats.lastInputTokens > 0 && baselineFloor <= 0 && prepared.processedMessages.length > 0;
+    // [#autoFold] a growth trigger is operator intent, not a billing guess —
+    // it never needs upstream evidence and must fold on the FIRST armed
+    // request, so the #2313 estimate-only forward-once never skips it.
+    const probeForEvidence = !growthArmed && !unknownBaseline && session.stats.lastInputTokens > 0 && baselineFloor <= 0 && prepared.processedMessages.length > 0;
     if (probeForEvidence) {
         log("info", `[${session.id}] preflight trigger fired on estimate only (~${Math.round(textChannel)} text + ~${imageTokens} image vs window ${limit}); baseline ${session.stats.lastInputTokens} (${session.stats.lastInputTokensSource ?? "unprovenanced"}) carries no current-route upstream evidence — forwarding once to acquire usage/overflow evidence before compressing (#2313)`);
         return prepared;
@@ -2614,7 +2634,7 @@ export async function preflightCompressIfNeeded(
     // provider-billed baseline and the (calibrated) local estimate — so a
     // false trigger is diagnosable from the log alone instead of requiring a
     // cross-reference between gate and nudge lines.
-    log("warn", `[${session.id}] context ${tokenCount} tokens reached preflight target ${compressionTarget} (model window ${limit}, model=${model}; usage-baseline=${baselineFloor > 0 ? baselineFloor : "none"} local-est=${Math.round(calibratedText)}${kFactor !== undefined ? ` raw=${Math.round(textEstimate + overheadEstimate)} k̂=${kFactor.toFixed(2)}` : ""}); preflight compressing before forward`);
+    log("warn", `[${session.id}] context ${tokenCount} tokens reached preflight target ${compressionTarget}${growthArmed ? " (auto-fold growth floor)" : ""} (model window ${limit}, model=${model}; usage-baseline=${baselineFloor > 0 ? baselineFloor : "none"} local-est=${Math.round(calibratedText)}${kFactor !== undefined ? ` raw=${Math.round(textEstimate + overheadEstimate)} k̂=${kFactor.toFixed(2)}` : ""}); preflight compressing before forward`);
     // #300: stamp the chain marker so a downstream bili skips these
     // summarization calls too (preflight always processes).
     const { upstreamUrl, headers, proxyUrl } = buildForwardTarget(req, opts, route, affinity, instanceId);
@@ -2649,6 +2669,7 @@ export async function preflightCompressIfNeeded(
                 session,
                 config,
                 compressionTarget,
+                compressReason: growthArmed ? "growth" : "overflow",
                 prompts: prepared.prompts ?? defaultPrompts,
                 surface: prepared.surface,
                 protocol: prepared.protocol,
@@ -2749,6 +2770,18 @@ export async function preflightCompressIfNeeded(
     if (f?.kind === "aborted") {
         log("warn", `[${session.id}] preflight aborted (${f.detail}); not forwarding`);
         return { failFast: true, status: 0, message: f.detail, retryable: false, respond: false };
+    }
+    // [#autoFold] fail-fast is an OVERFLOW concept: a growth-armed payload
+    // fits the real window by definition, so a fold that could not reach the
+    // lean target forwards anyway — the session stays functional and the
+    // next growth-armed request retries the fold (a dead-end cooldown is
+    // never armed for growth: the key comparison paths above returned
+    // earlier, and the contentDeadEnd arm below is unreachable from here).
+    if (growthArmed && payloadFitsWindow) {
+        log("warn", `[${session.id}] auto-fold did not reach the growth target ${compressionTarget} (${result.compressedRanges} range(s) folded) — forwarding anyway (payload fits the model window ${limit}); backing off auto-fold for ${Math.round(AUTO_FOLD_BACKOFF_MS / 60_000)}m so classic nudges resume`);
+        armAutoFoldBackoff(session);
+        markDirty(session);
+        return outbound;
     }
     // #1800: still over-window after compression, but the residual excess is carried
     // ENTIRELY by the image estimate (text+overhead fits on its own) and we hold no

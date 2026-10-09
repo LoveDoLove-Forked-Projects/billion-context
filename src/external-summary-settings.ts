@@ -24,6 +24,14 @@ export interface ExternalSummarySettings {
     enabled: boolean;
     targets: ExternalSummaryTarget[];
     budget: SummaryBudget;
+    /** [#autoFold] Proxy-driven growth folding: when true, preflight folds
+     *  the conversation down to `autoFoldTargetTokens` (default half the
+     *  model window) BEFORE forwarding — the model never sees a nudge and
+     *  never drafts compression plans. Requires the chain itself to stay
+     *  enabled; an unresolvable target disables the chain and thus the
+     *  auto-fold (nudges come back). */
+    autoFold?: boolean;
+    autoFoldTargetTokens?: number;
 }
 
 /** A chain as it sits in the config file: model references into the named
@@ -32,7 +40,9 @@ export interface ExternalSummarySettings {
 export interface ExternalSummaryChain {
     enabled: boolean;
     targets: string[];
-    budget: SummaryBudget;
+    budget?: SummaryBudget;
+    autoFold?: boolean;
+    autoFoldTargetTokens?: number;
 }
 
 const SUMMARY_DEFAULT_BUDGET: Readonly<SummaryBudget> = {
@@ -63,6 +73,32 @@ function text(value: unknown, limit: number): string {
     return value.trim();
 }
 
+const AUTO_FOLD_TARGET_MIN = 8_192;
+const AUTO_FOLD_TARGET_MAX = 10_000_000;
+
+/** [#autoFold] Both parsers share the exact switch/target semantics: the
+ *  target is only meaningful with the switch on; the switch defaults to
+ *  half the model window at trigger time. */
+function parseAutoFold(settings: Record<string, unknown>): { autoFold?: boolean; autoFoldTargetTokens?: number } {
+    let autoFold: boolean | undefined;
+    if (settings.autoFold !== undefined) {
+        if (typeof settings.autoFold !== "boolean") throw new Error("External summary autoFold must be boolean");
+        autoFold = settings.autoFold;
+    }
+    let autoFoldTargetTokens: number | undefined;
+    if (settings.autoFoldTargetTokens !== undefined) {
+        if (typeof settings.autoFoldTargetTokens !== "number" || !Number.isSafeInteger(settings.autoFoldTargetTokens)
+            || settings.autoFoldTargetTokens < AUTO_FOLD_TARGET_MIN || settings.autoFoldTargetTokens > AUTO_FOLD_TARGET_MAX) {
+            throw new Error(`External summary autoFoldTargetTokens must be an integer between ${AUTO_FOLD_TARGET_MIN} and ${AUTO_FOLD_TARGET_MAX}`);
+        }
+        autoFoldTargetTokens = settings.autoFoldTargetTokens;
+    }
+    // A target without the switch is inert config noise, not an error; the
+    // switch without a target is the normal "half the window" default.
+    if (autoFold !== true) return {};
+    return { autoFold, ...(autoFoldTargetTokens !== undefined ? { autoFoldTargetTokens } : {}) };
+}
+
 function parseBudget(raw: unknown): SummaryBudget {
     const rawBudget = raw === undefined ? {} : object(raw);
     knownKeys(rawBudget, ["totalTimeoutMs", "targetTimeoutMs", "maxSummaryBytes"]);
@@ -82,7 +118,7 @@ function parseBudget(raw: unknown): SummaryBudget {
  *  against the providers table at expansion time (expandExternalSummaryChain). */
 export function parseExternalSummaryChain(value: unknown): ExternalSummaryChain {
     const settings = object(value);
-    knownKeys(settings, ["enabled", "targets", "budget"]);
+    knownKeys(settings, ["enabled", "targets", "budget", "autoFold", "autoFoldTargetTokens"]);
     if (settings.enabled !== undefined && typeof settings.enabled !== "boolean") throw new Error("External summary enabled must be boolean");
     const enabled = settings.enabled === true;
     if (!enabled) {
@@ -101,7 +137,7 @@ export function parseExternalSummaryChain(value: unknown): ExternalSummaryChain 
         if (slash <= 0 || slash === target.length - 1) throw new Error(`External summary target "${target}" must reference a provider and model as "provider/model"`);
         return target;
     });
-    return { enabled, targets, budget: parseBudget(settings.budget) };
+    return { enabled, targets, budget: parseBudget(settings.budget), ...parseAutoFold(settings) };
 }
 
 /** Expand chain references against the named providers table. THROWS on an
@@ -111,7 +147,7 @@ export function parseExternalSummaryChain(value: unknown): ExternalSummaryChain 
  *  (#2336 agent-registry form) — it expands to an inline-key target instead
  *  of a credential reference. */
 export function expandExternalSummaryChain(chain: ExternalSummaryChain, recipes: Record<string, NamedProviderRecipe & { apiKey?: string }>): ExternalSummarySettings {
-    if (!chain.enabled) return { enabled: false, targets: [], budget: chain.budget };
+    if (!chain.enabled) return { enabled: false, targets: [], budget: chain.budget ?? SUMMARY_DEFAULT_BUDGET };
     const names = new Set<string>();
     const targets = chain.targets.map((ref): ExternalSummaryTarget => {
         const slash = ref.indexOf("/");
@@ -132,7 +168,7 @@ export function expandExternalSummaryChain(chain: ExternalSummaryChain, recipes:
         const credentialRef = recipe.apiKeyEnv ? `env:${recipe.apiKeyEnv}` : `secret:${recipe.credentialRef}`;
         return { name, protocol: recipe.api, url: derivedSummaryEndpoint(recipe, model, stream), model, ...(inlineKey !== undefined ? { apiKey: inlineKey } : { credentialRef }), contextWindow, outputTokens, stream };
     });
-    return { enabled: true, targets, budget: chain.budget };
+    return { enabled: true, targets, budget: chain.budget ?? SUMMARY_DEFAULT_BUDGET, ...parseAutoFold(chain as unknown as Record<string, unknown>) };
 }
 
 /** Derive the full request endpoint from a recipe's baseUrl + api type —
@@ -168,7 +204,7 @@ function derivedSummaryEndpoint(recipe: NamedProviderRecipe, model: string, stre
 export function parseExternalSummarySettings(value: unknown, options: { inlineKeys?: boolean } = {}): ExternalSummarySettings {
     const inlineKeys = options.inlineKeys === true;
     const settings = object(value);
-    knownKeys(settings, ["enabled", "targets", "budget"]);
+    knownKeys(settings, ["enabled", "targets", "budget", "autoFold", "autoFoldTargetTokens"]);
     if (settings.enabled !== undefined && typeof settings.enabled !== "boolean") throw new Error("External summary enabled must be boolean");
     const enabled = settings.enabled === true;
     if (!enabled) {
@@ -212,7 +248,7 @@ export function parseExternalSummarySettings(value: unknown, options: { inlineKe
         }
         return { name, protocol, url: url.href, model, ...(inlineKey !== undefined ? { apiKey: inlineKey } : { credentialRef }), contextWindow, outputTokens, stream: target.stream === true };
     });
-    return { enabled: true, targets, budget: parseBudget(settings.budget) };
+    return { enabled: true, targets, budget: parseBudget(settings.budget), ...parseAutoFold(settings) };
 }
 
 const seenExpansionWarnings = new Set<string>();
