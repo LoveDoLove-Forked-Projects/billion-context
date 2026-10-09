@@ -907,7 +907,10 @@ test("#2559: explicit host theme pin overrides the OS palette; #2560 embed frame
     // pins the face via ?theme= (renderPage → <html data-theme=…>). An
     // explicit pin must OUTRANK the media query, so the OS-driven block
     // narrows to :not([data-theme]) while the pinned palette repeats it.
-    const styles = fs.readFileSync(new URL("../src/web/styles.ts", import.meta.url), "utf8");
+    // Normalize CRLF first: Git-for-Windows checks .ts out with \r\n (autocrlf
+    // default; .gitattributes pins only tests/golden/** to LF), which breaks
+    // every mid-string "\n" literal below on Windows CI runs.
+    const styles = fs.readFileSync(new URL("../src/web/styles.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     assert.ok(
         styles.includes("@media (prefers-color-scheme: dark) {\n    :root:not([data-theme]) {"),
         "the OS-driven dark palette stays out of explicitly pinned documents",
