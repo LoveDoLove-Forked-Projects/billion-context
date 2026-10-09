@@ -4396,6 +4396,29 @@ function resolveCodexWin32(env: NodeJS.ProcessEnv): { command: string; prefixArg
     return undefined;
 }
 
+// First alias present on PATH (per-client alias chains differ only in name order).
+function firstOnPath(names: readonly string[], env: NodeJS.ProcessEnv): string | undefined {
+    for (const name of names) {
+        const resolved = resolveOnPath(name, env);
+        if (resolved) return resolved;
+    }
+    return undefined;
+}
+
+// Ordered extension probe for an install-dir binary base path (Windows shims land
+// as .cmd/.bat/.exe); returns the first existing candidate, else the bare base.
+function probeInstalledBin(base: string, exts: readonly string[]): string {
+    for (const ext of exts) {
+        const candidate = base + ext;
+        try {
+            if (fs.existsSync(candidate)) return candidate;
+        } catch {
+            // Unreadable candidate: fall through to the next extension.
+        }
+    }
+    return base;
+}
+
 export function resolveClientCommand(
     client: ClientName,
     env: NodeJS.ProcessEnv,
@@ -4418,20 +4441,15 @@ export function resolveClientCommand(
         return { command: process.execPath, prefixArgs: [cli] };
     }
     if (client === "codebuddy") {
-        const resolved = resolveOnPath("codebuddy", env) ?? resolveOnPath("cbc", env);
-        return { command: resolved ?? "codebuddy", prefixArgs: [] };
+        return { command: firstOnPath(["codebuddy", "cbc"], env) ?? "codebuddy", prefixArgs: [] };
     }
     if (client === "qoder") {
         // npm bin names: `qoder` (primary) with `qodercli` as the alternate
         // registration (both packages ship either).
-        const resolved = resolveOnPath("qoder", env) ?? resolveOnPath("qodercli", env);
-        return { command: resolved ?? "qoder", prefixArgs: [] };
+        return { command: firstOnPath(["qoder", "qodercli"], env) ?? "qoder", prefixArgs: [] };
     }
     if (client === "trae") {
-        const traeBin = resolveOnPath("traecli", env)
-            ?? resolveOnPath("trae-cli", env)
-            ?? resolveOnPath("trae", env);
-        return { command: traeBin ?? "traecli", prefixArgs: [] };
+        return { command: firstOnPath(["traecli", "trae-cli", "trae"], env) ?? "traecli", prefixArgs: [] };
     }
     if (client === "kimi") {
         // install.sh / npm postinstall both place the binary at <KIMI_CODE_HOME>/bin/kimi.
@@ -4445,15 +4463,7 @@ export function resolveClientCommand(
         const resolved = resolveOnPath("mcode", env);
         if (resolved) return { command: resolved, prefixArgs: [] };
         const binBase = path.join(resolveMcodeInstallDir(env), "bin", "mcode");
-        for (const ext of platform === "win32" ? [".cmd", ".bat", ".exe", ""] : [""]) {
-            const candidate = binBase + ext;
-            try {
-                if (fs.existsSync(candidate)) return { command: candidate, prefixArgs: [] };
-            } catch {
-                // Unreadable candidate: fall through to the next extension.
-            }
-        }
-        return { command: binBase, prefixArgs: [] };
+        return { command: probeInstalledBin(binBase, platform === "win32" ? [".cmd", ".bat", ".exe", ""] : [""]), prefixArgs: [] };
     }
     if (client === "antigravity") {
         // #2115: the CLI binary is named `agy` (Gemini CLI successor), not
@@ -4464,15 +4474,7 @@ export function resolveClientCommand(
         const base = platform === "win32"
             ? path.join(env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "agy", "bin", "agy")
             : path.join(os.homedir(), ".local", "bin", "agy");
-        for (const ext of platform === "win32" ? [".exe", ""] : [""]) {
-            const candidate = base + ext;
-            try {
-                if (fs.existsSync(candidate)) return { command: candidate, prefixArgs: [] };
-            } catch {
-                // Unreadable candidate: fall through to the next extension.
-            }
-        }
-        return { command: base, prefixArgs: [] };
+        return { command: probeInstalledBin(base, platform === "win32" ? [".exe", ""] : [""]), prefixArgs: [] };
     }
     if (client === "codex" && platform === "win32") {
         // #2196: the default npm install is a codex.cmd shim whose %*
