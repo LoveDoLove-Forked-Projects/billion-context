@@ -69,7 +69,7 @@ export const WEB_STYLES = String.raw`
     --green: #3fb950;
     --green-soft: rgba(63, 185, 80, 0.14);
     --red: #f85149;
-    --red-soft: rgba(248, 81, 46, 0.12);
+    --red-soft: rgba(248, 81, 73, 0.12);
     --amber: #d29922;
     --amber-soft: rgba(210, 153, 34, 0.14);
     --purple: #a371f7;

@@ -913,6 +913,31 @@ test("#2559: explicit host theme pin overrides the OS palette; #2560 embed frame
         "the OS-driven dark palette stays out of explicitly pinned documents",
     );
     assert.ok(styles.includes(':root[data-theme="dark"] {'), "an explicit dark pin carries the full dark palette");
+    {
+        // Review finding on #2564: the pinned list had drifted from the
+        // OS-driven one (--red-soft green channel 73→46) — CSS cannot share
+        // declarations across the media boundary, so drift stays silent.
+        // Pin SET-EQUALITY (color-scheme aside): both lists must carry the
+        // same declarations verbatim.
+        const grab = (open: string): string => {
+            const i = styles.indexOf(open);
+            assert.ok(i >= 0, `${open} present`);
+            return styles.slice(i + open.length, styles.indexOf("}", i));
+        };
+        const decls = (block: string): string[] =>
+            block.split("\n")
+                .map((l) => l.trim().replace(/;\s*$/, ""))
+                .filter((l) => l !== "" && !l.startsWith("*"));
+        const pinned = decls(grab(':root[data-theme="dark"] {'));
+        const osDriven = decls(grab(":root:not([data-theme]) {"));
+        for (const d of pinned) {
+            if (d.startsWith("color-scheme")) continue;
+            assert.ok(osDriven.includes(d), `pinned dark declaration missing from the OS-driven list: ${d}`);
+        }
+        for (const d of osDriven) {
+            assert.ok(pinned.includes(d), `OS-driven dark declaration missing from the pin: ${d}`);
+        }
+    }
     assert.ok(
         styles.includes(':root[data-theme="light"] {\n    color-scheme: light;\n}'),
         "an explicit light pin rebinds the canvas over a dark OS",
