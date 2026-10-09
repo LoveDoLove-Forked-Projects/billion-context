@@ -16,7 +16,7 @@ export function externalSummaryEnabled(config: unknown): boolean {
  *  target collapses the chain to enabled=false (expandExternalSummaryChain
  *  -Tolerant), so this flips false and classic nudges come back — the
  *  fail-open path. */
-export function autoFoldActive(config: unknown): boolean {
+function autoFoldActive(config: unknown): boolean {
     const ext = (config as ResolvedKernelConfig | undefined)?.externalSummary;
     return ext?.enabled === true && ext.autoFold === true;
 }
@@ -29,7 +29,7 @@ export function autoFoldActive(config: unknown): boolean {
  *  module import-leaf clean. */
 export const AUTO_FOLD_BACKOFF_MS = 10 * 60_000;
 
-export function autoFoldBackoffActive(session: { metadata?: Record<string, unknown> } | undefined): boolean {
+function autoFoldBackoffActive(session: { metadata?: Record<string, unknown> } | undefined): boolean {
     const until = session?.metadata?.autoFoldBackoffUntil;
     return typeof until === "number" && until > Date.now();
 }
