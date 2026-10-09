@@ -96,6 +96,10 @@ async function makeFixtureTarball(work: string, version: string): Promise<string
         const src = path.join(REPO_ROOT, entry);
         if (fs.existsSync(src)) await fs.promises.cp(src, path.join(stage, entry), { recursive: true });
     }
+    // `prepare` runs while npm packs this stage; scripts/ is not part of
+    // `files` (the tarball stays identical to a real publish) but must be
+    // present for it to execute (#2471).
+    await fs.promises.cp(path.join(REPO_ROOT, "scripts"), path.join(stage, "scripts"), { recursive: true });
     const home = path.join(work, "home-pkg");
     fs.mkdirSync(home, { recursive: true });
     const listing = execNpm(["pack", "--silent", "--pack-destination", packs], stage, { HOME: home }).trim().split("\n").pop()?.trim();
