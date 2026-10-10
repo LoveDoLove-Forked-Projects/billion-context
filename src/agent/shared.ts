@@ -312,8 +312,15 @@ export async function fetchStatusLatest(proxyBase: string): Promise<Record<strin
 export async function fetchProxyVersion(proxyBase: string): Promise<string | undefined> {
     const { ok, json } = await fetchJson(`${proxyBase}/__bili/plugin/manifest`, undefined, STATUS_TIMEOUT_MS);
     if (!ok || !json || typeof json !== "object") return undefined;
-    const version = (json as { version?: unknown }).version;
-    return typeof version === "string" && version.length > 0 ? version : undefined;
+    const m = json as { version?: unknown; commit?: unknown };
+    const version = m.version;
+    if (typeof version !== "string" || version.length === 0) return undefined;
+    // Append the build commit so status surfaces show WHICH build answers,
+    // matching /__bili/status and `--version` (they all include it). Consumers
+    // only display or liveness-check this string — none parses it.
+    const commit = m.commit;
+    if (typeof commit === "string" && commit.length > 0) return `${version} (${commit})`;
+    return version;
 }
 
 /** #1603: one-line staleness warning for status UIs — the on-disk install is
@@ -323,14 +330,17 @@ export async function fetchProxyVersion(proxyBase: string): Promise<string | und
 export async function fetchStaleNotice(proxyBase: string): Promise<string | undefined> {
     const { ok, json } = await fetchJson(`${proxyBase}/__bili/status`, undefined, STATUS_TIMEOUT_MS);
     if (!ok || !json || typeof json !== "object") return undefined;
-    const s = json as { stale?: unknown; version?: unknown; diskVersion?: unknown; autoRestartOnUpdate?: unknown };
+    const s = json as { stale?: unknown; version?: unknown; diskVersion?: unknown; autoRestartOnUpdate?: unknown; commit?: unknown };
     if (s.stale !== true) return undefined;
     const running = typeof s.version === "string" ? s.version : "?";
     const installed = typeof s.diskVersion === "string" ? s.diskVersion : "?";
+    // Same-version builds can differ (dev vs released); the running side gets
+    // its commit so users can tell which build is actually answering.
+    const runningCommit = typeof s.commit === "string" && s.commit.length > 0 ? s.commit : undefined;
     const tail = s.autoRestartOnUpdate === true
         ? " — auto-restart is enabled but did not fire this cycle; check the bili log"
         : " — restart the host to activate (or enable --auto-restart-on-update)";
-    return `⚠️ billion-context is stale: running v${running} but v${installed} is installed${tail}.`;
+    return `⚠️ billion-context is stale: running v${running}${runningCommit ? ` (${runningCommit})` : ""} but v${installed} is installed${tail}.`;
 }
 
 /** #1365: poll the attach liveness probe until it answers or the deadline

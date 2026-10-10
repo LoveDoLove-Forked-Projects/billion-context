@@ -44,6 +44,11 @@ export interface StatusPanelInput {
   cacheUsages?: ReadonlyArray<CacheUsageSample>;
   /** Token formatter override (defaults to formatCompactTokens). */
   fmtTokens?: (n: number) => string;
+  /** Block ids whose summaries were written by an out-of-band executor
+   *  (e.g. the host's external summary service) rather than the model
+   *  itself. Purely cosmetic: the panel marks these lines with "⚡ext".
+   *  Omit to render without markers. */
+  externalBlockIds?: ReadonlySet<string>;
 }
 
 function bar(value: number, total: number, width: number = 20): string {
@@ -74,6 +79,7 @@ function bar(value: number, total: number, width: number = 20): string {
 export function buildStatusPanel(input: StatusPanelInput): string {
   const { tokenCount, state, nudge, modelContextLimit } = input;
   const fmt = input.fmtTokens ?? formatCompactTokens;
+  const externalBlockIds = input.externalBlockIds;
   const bd = nudge?.contextBreakdown;
   const limit = modelContextLimit;
   const classified = bd
@@ -184,8 +190,9 @@ export function buildStatusPanel(input: StatusPanelInput): string {
         : `: ${topicFallback(b.summary || "")}`;
       const summaryTok = defaultCountTokens(b.summary || "");
       const origTok = b.compressedTokens > 0 ? b.compressedTokens : summaryTok;
+      const ext = externalBlockIds?.has(b.blockId) ? " ⚡ext" : "";
       lines.push(
-        `  [${b.blockId}] T${b.tier} ${fmt(origTok)}→${fmt(summaryTok)}${topic}`,
+        `  [${b.blockId}] T${b.tier} ${fmt(origTok)}→${fmt(summaryTok)}${ext}${topic}`,
       );
     }
   } else if (totalBlocksList.length > 0) {

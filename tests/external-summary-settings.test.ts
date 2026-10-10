@@ -290,3 +290,28 @@ test("config/credential API never echoes keys, and saves validate recipes and ch
         else process.env.BILI_CONFIG_FILE = previous;
     }
 });
+
+test("autoFold rides both the chain form and the expanded rail form", () => {
+    const chain = parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: true, autoFoldTargetTokens: 12000 });
+    assert.equal(chain.autoFold, true);
+    assert.equal(chain.autoFoldTargetTokens, 12000);
+    const plan = expandExternalSummaryChain(chain, recipes);
+    assert.equal(plan.autoFold, true);
+    assert.equal(plan.autoFoldTargetTokens, 12000);
+    assert.doesNotThrow(() => parseExternalSummarySettings(plan));
+    // Default: no explicit target → the host halves the window at arm time.
+    const lazy = expandExternalSummaryChain(parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: true }), recipes);
+    assert.equal(lazy.autoFold, true);
+    assert.equal(lazy.autoFoldTargetTokens, undefined);
+});
+
+test("autoFold validation: boolean only, target within [8192, 10M]", () => {
+    assert.throws(() => parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: "yes" }), /autoFold must be boolean/);
+    assert.throws(() => parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: true, autoFoldTargetTokens: 0 }), /autoFoldTargetTokens must be an integer/);
+    assert.throws(() => parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: true, autoFoldTargetTokens: 8191 }), /autoFoldTargetTokens must be an integer/);
+    assert.throws(() => parseExternalSummaryChain({ enabled: true, targets: ["glm/glm-4.9-flash"], autoFold: true, autoFoldTargetTokens: "big" }), /autoFoldTargetTokens must be an integer/);
+    // A disabled chain never reads the rest of the object (early return).
+    const off = parseExternalSummaryChain({ enabled: false, targets: [], autoFold: "junk" as unknown as boolean });
+    assert.equal(off.enabled, false);
+    assert.equal(off.autoFold, undefined);
+});

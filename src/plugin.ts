@@ -64,6 +64,8 @@ import { stateDir } from "./paths.js";
 import { lookupToolWitness, recordToolWitness } from "./tool-ring.js";
 import { awaitDrain } from "./server/stream-io.js";
 import { incomingCoreMessages } from "./fork-adoption.js";
+import { BUILD_COMMIT } from "./version.js";
+import { isExternalSummaryBlock } from "./external-summary-marker.js";
 
 // The proxy's own version, read from package.json at runtime (works in both dev
 // via tsx and bundled via tsup). Shown in the /acp panel header, aligned with
@@ -835,6 +837,7 @@ export function handlePluginManifest(res: import("node:http").ServerResponse, co
         protocolVersion: PLUGIN_PROTOCOL_VERSION,
         proxy: "billion-context",
         version: VERSION,
+        commit: BUILD_COMMIT,
         toolNames: [...PROXY_TOOL_NAMES, ...(absorbTools ? [absorbName] : []), ...(rulesOn ? [RULE_TOOL_NAME] : []), ...(ccrOn ? [ccrName] : [])],
         tools: {
             anthropic: [...acpAnthropic, ...(absorbTools ? [absorbTools.anthropic] : []), ...(rulesOn ? [RULE_TOOL] : []), ...(ccrTools ? [ccrTools.anthropic] : [])],
@@ -1352,7 +1355,10 @@ export function handlePluginStatus(conversationId: string, res: import("node:htt
         const sysTokRaw = session.metadata.systemPromptTokens;
         const systemPromptTokens = typeof sysTokRaw === "number" && Number.isFinite(sysTokRaw) && sysTokRaw > 0 ? sysTokRaw : 0;
         panel = buildStatusPanel({
-            version: `billion-context@${PROXY_VERSION} · pack: ${session.meta.activePack ?? "default"}`,
+            version: `billion-context@${PROXY_VERSION}${BUILD_COMMIT && BUILD_COMMIT !== "unknown" ? ` (${BUILD_COMMIT})` : ""} · pack: ${session.meta.activePack ?? "default"}`,
+            // ⚡ext marker: blocks whose summaries the external summary
+            // chain wrote. Display-only set, computed from compressCallId.
+            externalBlockIds: new Set(session.state.blocks.filter(isExternalSummaryBlock).map((b) => b.blockId)),
             tokenCount: statusInputBaseline(session),
             systemPromptTokens,
             state: session.state,

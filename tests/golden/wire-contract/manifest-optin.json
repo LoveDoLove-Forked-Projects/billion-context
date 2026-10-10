@@ -3,6 +3,7 @@
   "protocolVersion": 1,
   "proxy": "billion-context",
   "version": "<VERSION>",
+  "commit": "<COMMIT>",
   "toolNames": [
     "compress",
     "decompress",

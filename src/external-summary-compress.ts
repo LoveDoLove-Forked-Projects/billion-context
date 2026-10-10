@@ -6,7 +6,11 @@ import { applyRanges, normalizeRangeOrder, type RewriteCtx } from "./stream.js";
 import { compressResult, type ProxyToolResult } from "./proxy-tool-result.js";
 import { imagePlaceholders } from "./image-note.js";
 import type { SummaryWork } from "./external-summary.js";
-import { randomUUID } from "node:crypto";
+import { newExternalCallId } from "./external-summary-marker.js";
+
+// Re-exported for callers that historically imported it here; the canonical
+// home is the leaf module (kept import-graph-light for display surfaces).
+export { EXTERNAL_SUMMARY_CALL_ID_PREFIX, isExternalSummaryBlock, newExternalCallId } from "./external-summary-marker.js";
 
 function withOptionalSummaries(input: unknown): unknown {
     let value = input;
@@ -88,7 +92,7 @@ export async function applyConfiguredCompression(input: unknown, ctx: RewriteCtx
     if (signal?.aborted || ctx.session.state !== state || ctx.session.revisionEpoch !== revision) return compressResult("[Compression FAILED: cancelled or session changed while generating external summaries. Nothing compressed.]", "refused", 0);
     const successful: ParsedRange[] = [];
     for (const [index, result] of batch.results.entries()) {
-        if (result.status === "success") successful.push({ ...valid[index], summary: result.summary, compressCallId: `external-summary-${randomUUID()}` });
+        if (result.status === "success") successful.push({ ...valid[index], summary: result.summary, compressCallId: newExternalCallId() });
     }
     ctx.log(`[external-summary] completed ${successful.length}/${parsed.ranges.length} range(s); batch=${batch.status}`);
     if (successful.length === 0) return compressResult("[Compression FAILED: all configured external summary candidates failed or exceeded their budget. Nothing compressed; do not retry unchanged configuration.]", "refused", 0);
@@ -96,7 +100,7 @@ export async function applyConfiguredCompression(input: unknown, ctx: RewriteCtx
     // Client call arguments carry only an optional hint, never the generated summary.
     // In-place refolds retain their old call id in the kernel; keep their anchor too.
     for (const block of ctx.session.state.blocks) {
-        if (before.get(block.blockId)?.restoredInline && !block.restoredInline) block.compressCallId = `external-summary-${randomUUID()}`;
+        if (before.get(block.blockId)?.restoredInline && !block.restoredInline) block.compressCallId = newExternalCallId();
     }
     if (successful.length < parsed.ranges.length && (applied.blocksCreated ?? 0) > 0) return {
         ...applied, outcome: "partial", text: `${applied.text}\n[External summary: ${parsed.ranges.length - successful.length} selected range(s) were not compressed.]`,

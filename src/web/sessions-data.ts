@@ -10,6 +10,7 @@ import { METADATA_FOLD_COVERAGE } from "../fold-reconcile.js";
 import { markdownToHtml } from "./markdown.js";
 import { log } from "../logger.js";
 import { dataDir } from "../paths.js";
+import { isExternalSummaryBlock } from "../external-summary-marker.js";
 import { readdirSync, statSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import * as path from "node:path";
@@ -195,6 +196,9 @@ interface WebSessionDetail extends WebSessionSummary {
         startRef?: string;
         endRef?: string;
         active: boolean;
+        /** Present when the block's summary was written by the external
+         *  summary chain — the web block badge mirrors /acp's "⚡ext". */
+        external?: true;
     }>;
 }
 
@@ -880,6 +884,7 @@ function renderDetail(session: Session, live: boolean): WebSessionDetail {
                 ...(span === null && b.startRef !== undefined ? { startRef: b.startRef } : {}),
                 ...(span === null && b.endRef !== undefined ? { endRef: b.endRef } : {}),
                 active: b.active,
+                ...(isExternalSummaryBlock(b) ? { external: true } : {}),
             };
         }),
     };

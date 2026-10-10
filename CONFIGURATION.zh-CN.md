@@ -1107,7 +1107,9 @@ URL 键通道（或带 `bind` 的命名条目）可以向上游发送**自己的
     "externalSummary": {
       "enabled": true,
       "targets": ["glm/glm-4.9-flash", "claude/claude-haiku-4.5"],
-      "budget": { "totalTimeoutMs": 50000, "targetTimeoutMs": 25000, "maxSummaryBytes": 65536 }
+      "budget": { "totalTimeoutMs": 50000, "targetTimeoutMs": 25000, "maxSummaryBytes": 65536 },
+      "autoFold": true,
+      "autoFoldTargetTokens": 40000
     }
   }
 }
@@ -1116,6 +1118,8 @@ URL 键通道（或带 `bind` 的命名条目）可以向上游发送**自己的
 配方包含：`baseUrl`（必须 HTTPS，本地开发可用回环 HTTP；拒绝内嵌凭据、代理递归路径与任意 query 参数）；`api`（`openai` | `anthropic` | `responses` | `google` 四选一，决定线上协议并从 `baseUrl` 推导请求路径）；恰好一个凭据引用 —— `apiKeyEnv: "变量名"`（调用时读环境变量）或 `credentialRef: "名字"`（通过 Web UI 存储的值）；以及 `models` 表，每个模型可设 `contextWindow`（默认 128000）、`outputTokens`（默认 `min(8192, 窗口/4)`）、`stream`（默认 false）。配方也可以像 URL 条目一样拆成 `recipe`/`bind` 路由形态；具名条目未绑定时对路由不生效（routing-inert）。
 
 每条链最多 16 个目标。通过 Web API 保存启用的链时会校验每个引用可解析（未知 provider 或 model → HTTP 400）。运行时遇到不可解析的引用会记录一次警告并禁用整条链直至修复 —— 绝不会回退用主模型写摘要。`secret:` 值单独存储在私有的 `billion-context.json.summary-credentials.json` 文件中，不随主 JSON 配置下发，配置 API 也不会返回。Windows 上请用仅管理员的 ACL 保护该文件及其父目录；确认没有代理进程在写存储后，残留的 `.lock` 文件需手工删除。总预算由全部目标与压缩入口共享；取消或会话状态变化会丢弃已生成但未落盘的结果。
+
+两个可选旋钮可把这条链升级为**代理驱动的自动折叠器**（`autoFold`）：`"autoFold": true` 后代理不再等模型调压缩工具 —— 原本只守溢出窗口的零模型折叠引擎同样会在转发前把对话折到 `autoFoldTargetTokens`（默认：模型窗口的一半）以下，范围由内核选定、摘要由外部链完成。主模型完全看不到 nudge，也不会把思考预算花在起草压缩方案上。该旋钮随整链替换语义生效，且只在链本身启用时才起作用；`autoFoldTargetTokens` 必须是 `[8192, 10000000]` 内的整数。失败时 fail-open：链在折叠时出错则照常转发请求，退避 10 分钟内暂停自动折叠并恢复经典 advisory nudge。
 
 #### Agent 上报的 providers（兜底层）
 

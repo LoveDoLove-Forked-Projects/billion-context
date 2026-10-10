@@ -180,6 +180,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .badge.live { background: var(--green-soft); color: var(--green); border-color: var(--green); }
 .badge.disk { background: var(--bg-muted); color: var(--text-muted); border-color: var(--border); }
 .badge.proto { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-family: var(--mono); font-weight: 500; }
+.badge.ext { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-family: var(--mono); font-weight: 500; }
 .badge.warn { background: var(--amber-soft); color: var(--amber); border-color: var(--amber); }
 .badge.ok { background: var(--green-soft); color: var(--green); border-color: var(--green); }
 

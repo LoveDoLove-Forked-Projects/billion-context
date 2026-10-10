@@ -1255,7 +1255,9 @@ export const WEB_CLIENT = `(function () {
                 const badge = b.active
                     ? '<span class="badge ok">' + t("det.block_active") + "</span>"
                     : '<span class="badge disk">' + t("det.block_inactive") + "</span>";
-                parts.push('<details class="block-item"><summary><span class="bid">' + escapeHtml(b.blockId) + '</span>' + badge + '<span class="topic">' + escapeHtml(blockTopic(b)) + '</span><span class="meta">T' + String(b.tier) + " · " + fmtW(b.compressedTokens) + " · " + timeAgo(b.createdAt) + (refRange ? " · " + escapeHtml(refRange) : "") + '</span><button class="btn sm blk-copy" data-bi="' + i + '" style="margin-left:auto">' + t("common.copy") + '</button></summary><div class="body md">' + renderBlockMd(b.summary || "") + "</div></details>");
+                // External summary chain wrote the summary — mirrors /acp's "⚡ext" marker.
+                const extBadge = b.external ? '<span class="badge ext">' + t("det.block_external") + "</span>" : "";
+                parts.push('<details class="block-item"><summary><span class="bid">' + escapeHtml(b.blockId) + '</span>' + badge + extBadge + '<span class="topic">' + escapeHtml(blockTopic(b)) + '</span><span class="meta">T' + String(b.tier) + " · " + fmtW(b.compressedTokens) + " · " + timeAgo(b.createdAt) + (refRange ? " · " + escapeHtml(refRange) : "") + '</span><button class="btn sm blk-copy" data-bi="' + i + '" style="margin-left:auto">' + t("common.copy") + '</button></summary><div class="body md">' + renderBlockMd(b.summary || "") + "</div></details>");
             });
         }
         parts.push("</div></div>");
@@ -1362,7 +1364,7 @@ export const WEB_CLIENT = `(function () {
         const L = [];
         L.push("## Block " + b.blockId + (b.topic ? " — " + b.topic : "") + (b.active ? "" : " (inactive)"));
         L.push("");
-        L.push("tier " + b.tier + " · ~" + fmtW(b.compressedTokens) + " tokens" + (b.createdAt ? " · " + fmtDT(b.createdAt) : "") + (rr ? " · " + rr : ""));
+        L.push("tier " + b.tier + " · ~" + fmtW(b.compressedTokens) + " tokens" + (b.createdAt ? " · " + fmtDT(b.createdAt) : "") + (rr ? " · " + rr : "") + (b.external ? " · ⚡" + t("det.block_external") : ""));
         L.push("");
         L.push(String(b.summary || "").trim());
         return L.join("\\n");

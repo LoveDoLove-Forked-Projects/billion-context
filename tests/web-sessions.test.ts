@@ -253,6 +253,41 @@ withSessionsDir("buildSessionDetail returns blocks, ledger and rendered handoff"
     assert.equal(await buildSessionDetail("nope"), null);
 });
 
+withSessionsDir("buildSessionDetail flags externally-summarized blocks", async (dir) => {
+    const store = new SessionStore({ dir, debounceMs: 0, enabled: true });
+    const s = makeSession("det-ext", { protocol: "anthropic", title: "Ext" });
+    const seed = (): CompressionBlock => ({
+        blockId: "b",
+        runId: "r1",
+        tier: 1,
+        topic: "Topic",
+        summary: "Sum",
+        directMessageIds: [],
+        effectiveMessageIds: [],
+        directBlockIds: [],
+        compressedTokens: 900,
+        createdAt: Date.now(),
+        survivedCount: 1,
+        generation: "young",
+        active: true,
+    });
+    const extBlock: CompressionBlock = { ...seed(), blockId: "b-ext", compressCallId: "external-summary-00000000-0000-0000-0000-000000000000" };
+    const modelBlock: CompressionBlock = { ...seed(), blockId: "b-model", compressCallId: "toolu_01ABC" };
+    s.state.blocks.push(extBlock, modelBlock);
+    await store.writeNow(s);
+
+    _setStoreForTest(new SessionStore({ enabled: false }));
+    _resetDiskCacheForTest();
+    const d = await buildSessionDetail("det-ext");
+    assert.ok(d);
+    assert.equal(d.blockDetails.length, 2);
+    const ext = d.blockDetails.find((b) => b.blockId === "b-ext");
+    const model = d.blockDetails.find((b) => b.blockId === "b-model");
+    assert.ok(ext && model, "both blocks present");
+    assert.equal(ext!.external, true, "external-summary block flagged");
+    assert.equal(model!.external, undefined, "model-summarized block is not flagged");
+});
+
 interface OverviewBody {
     overview: {
         sessions: number;

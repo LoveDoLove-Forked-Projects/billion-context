@@ -18,6 +18,7 @@ import { compressBreakerDetail, compressLastFailureCause } from "./stream.js";
 import { describeAdvisory, getAdvisoryState } from "./advisory.js";
 import { getUpdateVisibility } from "./update-notes.js";
 import { VERSION, BUILD_COMMIT } from "./version.js";
+import { isExternalSummaryBlock } from "./external-summary-marker.js";
 import { toolOk, type ProxyToolResult } from "./proxy-tool-result.js";
 
 interface AcpStatusCtx {
@@ -247,7 +248,7 @@ export function handleAcpStatus(args: Record<string, unknown>, ctx: AcpStatusCtx
         for (const b of ctx.session.state.blocks) {
             if (!b.active) continue;
             const s = coveredRefSpan(ctx.session.state, b);
-            if (s) spans.push(`${b.blockId}=${s.text}`);
+            if (s) spans.push(`${b.blockId}=${s.text}${isExternalSummaryBlock(b) ? " ⚡ext" : ""}`);
         }
         if (spans.length > 0) {
             extra.push("");
