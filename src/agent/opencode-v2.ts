@@ -367,11 +367,10 @@ export function createOpencodeV2Setup(options: OpencodeV2SetupOptions = {}): (ct
 
         try {
             const wsReg = await ctx.session?.hook?.("experimental.ws.handshake", async (e) => {
-                // #2359: azure speaks the same OpenAI Responses WebSocket vocabulary;
-                // the egress filter in responses-ws keeps its handshake under Azure's
-                // custom-header cap. Any other provider stays unintercepted.
-                const providerID = e.model?.providerID;
-                if (pluginDisabled() || (providerID !== "openai" && providerID !== "azure") || typeof e.url !== "string" || !/^wss?:\/\//.test(e.url)) return;
+                // #2491: intercept any /responses endpoint (custom OpenAI-compatible
+                // providers were silently left uncompressed over WS); #2359 azure
+                // header-cap handling stays server-side in responses-ws egress.
+                if (pluginDisabled() || typeof e.url !== "string" || !/^wss?:\/\//.test(e.url)) return;
                 const httpUrl = e.url.replace(/^ws/, "http");
                 if (!new URL(httpUrl).pathname.endsWith("/responses")) return;
                 const requestEvent: V2HttpRequestEvent = { sessionID: e.sessionID, agent: e.agent, model: e.model, request: new Request(httpUrl, { headers: e.headers }) };

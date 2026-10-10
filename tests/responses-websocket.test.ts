@@ -96,7 +96,7 @@ test("Responses WS egress headers: azure strips consumed x-bili-* under the cust
     for (const dropped of ["host", "connection", "content-length", "sec-websocket-key"]) assert.ok(!(dropped in openai), `non-azure egress must still drop hop marker ${dropped}`);
 });
 
-test("V2 handshake: azure Responses sockets are intercepted; uncovered providers stay unintercepted", async () => {
+test("V2 handshake: openai/azure and custom OpenAI-compatible responses sockets are intercepted; non-responses endpoints stay direct", async () => {
     const hooks = new Map<string, (event: V2HttpRequestEvent) => void | Promise<void>>();
     const origin = "http://127.0.0.1:8787";
     const cleanup = await createOpencodeV2Setup({ route: createNativeRoute({ origin, ready: Promise.resolve(origin) }, { probe: async () => true }) })({
@@ -109,6 +109,15 @@ test("V2 handshake: azure Responses sockets are intercepted; uncovered providers
         assert.equal(azureEvent.url, `ws://127.0.0.1:8787/bili/responses/${azureUrl.replace(/^ws/, "http")}`);
         assert.equal(azureEvent.headers?.["x-bili-plugin"], "opencode");
         assert.equal(azureEvent.headers?.["x-bili-plugin-conversation"], "ses_az");
+        // #2491: a custom OpenAI-compatible provider on an OpenAI /responses endpoint
+        // must be intercepted too — previously only literal openai/azure ids qualified,
+        // so these silently bypassed the proxy and reached upstream uncompressed over WS.
+        const customUrl = "wss://api.aixw.example/v1/responses";
+        const customEvent: V2HttpRequestEvent = { url: customUrl, headers: { authorization: "Bearer custom-key" }, sessionID: "ses_custom", agent: "build", model: { providerID: "aixw-grok", id: "grok-4.7" } };
+        await hooks.get("experimental.ws.handshake")!(customEvent);
+        assert.equal(customEvent.url, `ws://127.0.0.1:8787/bili/responses/${customUrl.replace(/^ws/, "http")}`);
+        assert.equal(customEvent.headers?.["x-bili-plugin"], "opencode");
+        assert.equal(customEvent.headers?.["x-bili-plugin-conversation"], "ses_custom");
         const otherUrl = "wss://api.anthropic.com/v1/messages";
         const otherEvent: V2HttpRequestEvent = { url: otherUrl, headers: {}, sessionID: "ses_other", agent: "build", model: { providerID: "anthropic", id: "claude-x" } };
         await hooks.get("experimental.ws.handshake")!(otherEvent);
