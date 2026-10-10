@@ -84,7 +84,7 @@ import { AUTO_FOLD_TARGET_MIN } from "./external-summary-settings.js";
 import { applyRanges } from "./stream.js";
 import { attachSubagentSessions } from "./subagent-sessions.js";
 import { buildSessionCacheReport, handleAcpCache, learnedImageReserve, noteClientAbort, readKeySwitchStats, readModelSwitchStats, settleUsageReport } from "./cache-ledger.js";
-import { extractBillingAttributionBlock, extractSummaryFromSse, preflightCompress, estimateCoreMessages, estimateCoreMessagesUpper, estimateRawBodyTokens, type PreflightResult } from "./preflight.js";
+import { extractBillingAttributionBlock, extractSummaryFromSse, preflightCompress, estimateCoreMessages, estimateCoreMessagesUpper, estimateCoreMessagesUpperBytes, estimateRawBodyTokens, type PreflightResult } from "./preflight.js";
 import { buildDecisionPrompt, buildDirectiveText, consumeFallback, DEFAULT_DECIDE_MAX_TOKENS, DECIDE_TIMEOUT_MS, extractDecisionText, ladderMode, parseDecision, recordDecision, resolveDecisionRange, type DecideConfig, type DecisionOutcome } from "./nudge-decide.js";
 import { gcConfigFromEnv, gcSessionFiles } from "./session-gc.js";
 import { countImagesInParsedBody, countImagesInRawBody, imageTokensInRawBody, imageTokensInParsedBody, resolveImageBilling, upstreamHost, type ResolvedImageBilling } from "./image-tokens.js";
@@ -2506,6 +2506,31 @@ export async function preflightCompressIfNeeded(
     // request, so the #2313 estimate-only forward-once never skips it.
     const probeForEvidence = !growthArmed && !unknownBaseline && session.stats.lastInputTokens > 0 && baselineFloor <= 0 && prepared.processedMessages.length > 0;
     if (probeForEvidence) {
+        // #2490: mathematically-doomed probe guard. The forward-once below bets
+        // one request on "the estimator might be wrong about size"; that bet has
+        // positive expected value only while SOME tokenizer could make the
+        // payload fit. Price the bet in UTF-8 BYTES of the core text against TWO
+        // bars — window×7.5 (densest live-route billing observed: ~6.8 B/token,
+        // #2122's calibrated shim) AND an absolute 2MB floor. The floor keeps
+        // synthetic-but-legal dense payloads probing (the #1001 rewrite test
+        // rides 86KB at 8.6 B/tok against a 10K window — repetitive text real
+        // tokenizers DO compress past 7.5 B/token): below 2MB the probe costs
+        // one small request and density assumptions deserve the benefit of the
+        // doubt; past it (incident #2490: a 7.5MB single assistant turn against
+        // a 1M window) forwarding "for evidence" is a guaranteed 400 with a
+        // multi-MB body, not an experiment — fail fast with the byte math so
+        // the operator can verify it by hand. Bytes, not chars: CJK monsters
+        // are char-cheap (1 char ≈ 1 token already) but byte-doomed; every legit
+        // fitting English payload sits ~4× under the ratio bar.
+        const coreTextBytes = estimateCoreMessagesUpperBytes(prepared.processedMessages);
+        const DOOMED_PROBE_BYTES_PER_TOKEN = 7.5;
+        const DOOMED_PROBE_ABSOLUTE_BYTES = 2_000_000;
+        if (coreTextBytes > Math.max(DOOMED_PROBE_ABSOLUTE_BYTES, limit * DOOMED_PROBE_BYTES_PER_TOKEN)) {
+            const byteFloorTokens = Math.ceil(coreTextBytes / DOOMED_PROBE_BYTES_PER_TOKEN);
+            const doomedMessage = `payload core text alone is ~${coreTextBytes} bytes — even at the densest tokenizer density observed on a live route (~${DOOMED_PROBE_BYTES_PER_TOKEN} bytes/token, #2122) that is ≥ ~${byteFloorTokens} tokens vs the model window ${limit} (model=${model}); no upstream can accept it, so it was NOT forwarded even for evidence. Remove or trim the oversized content (e.g. a giant paste or tool result) and retry.`;
+            log("error", `[${session.id}] preflight fail-fast 502 (retryable=false): ${doomedMessage}`);
+            return { failFast: true, status: 502, message: doomedMessage, retryable: false, respond: !res.writableEnded };
+        }
         log("info", `[${session.id}] preflight trigger fired on estimate only (~${Math.round(textChannel)} text + ~${imageTokens} image vs window ${limit}); baseline ${session.stats.lastInputTokens} (${session.stats.lastInputTokensSource ?? "unprovenanced"}) carries no current-route upstream evidence — forwarding once to acquire usage/overflow evidence before compressing (#2313)`);
         return prepared;
     }

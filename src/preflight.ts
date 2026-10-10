@@ -335,6 +335,19 @@ export function estimateCoreMessagesUpper(messages: CoreMessage[]): number {
     return chars;
 }
 
+// #2490: UTF-8 byte twin of the char upper bound. Chars and bytes diverge on
+// CJK (1 char = 3 bytes, real density as low as ~1.5 chars/token) — a pure-CJK
+// monster can be char-harmless yet byte-doomed, so the doomed-probe guard
+// prices the floor in bytes: even the densest tokenizer observed on a live
+// route compresses agent traffic to ~6.8 bytes/token (#2122), so a core-text
+// mass beyond window×7.5 bytes cannot fit under ANY plausible tokenizer and
+// forwarding it "to acquire evidence" is a guaranteed 400, not an experiment.
+export function estimateCoreMessagesUpperBytes(messages: CoreMessage[]): number {
+    let bytes = 0;
+    for (const m of messages) bytes += Buffer.byteLength(m.text ?? "", "utf8");
+    return bytes;
+}
+
 function spanUnitsOf(messages: CoreMessage[], startIdx: number, endIdx: number, countText: (text: string) => number): number {
     let units = 0;
     for (let i = startIdx; i <= endIdx && i < messages.length; i++) {

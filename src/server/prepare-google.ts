@@ -20,7 +20,7 @@ import { attachSubagentSessions } from "../subagent-sessions.js";
 import { reconcileSystemAnchor } from "../system-anchor.js";
 import { stripAcpPanelMessages, stripAcpStatusMarkers } from "../acp-panel.js";
 import { stripEmbeddedChainCarriers } from "../chain-checkpoint.js";
-import { clampOutgoingOutput, countSystemAndToolsTokens, emergencyNudge } from "./budget.js";
+import { clampOutgoingOutput, countSystemAndToolsTokens, dshLedgerFloorTokens, emergencyNudge } from "./budget.js";
 import { estimateCoreMessages } from "../preflight.js";
 import { effectiveAbsorbBlock } from "./prepare-responses.js";
 import { injectGoogleTool, injectTool } from "./inject.js";
@@ -233,7 +233,7 @@ export async function prepareGoogle(
     }
 
     const rebuilt: GoogleRequestBody = { ...parsed, contents: rebuiltContents, tools: toolsOut, systemInstruction };
-    clampOutgoingOutput(rebuilt as Record<string, unknown>, "generationConfig.maxOutputTokens", { systemText: googleClientSystem, tools: toolsOut, processedMessages, lastInputTokens: session.stats.lastInputTokens, lastInputTokensSource: session.stats.lastInputTokensSource, nativeWindow, headroomWindow: config.modelContextLimit, imageTokens: imageReserveFor(session, "google", rebuilt, opts, upstreamOrigin), kFactor: currentCalibrationFactor(session.stats, session.metadata?.lastModel), kOrigin: session.stats.calibratedEstimateOrigin, origin: upstreamOrigin }, sessionId, log);
+    clampOutgoingOutput(rebuilt as Record<string, unknown>, "generationConfig.maxOutputTokens", { systemText: googleClientSystem, tools: toolsOut, processedMessages, lastInputTokens: session.stats.lastInputTokens, lastInputTokensSource: session.stats.lastInputTokensSource, nativeWindow, headroomWindow: config.modelContextLimit, imageTokens: imageReserveFor(session, "google", rebuilt, opts, upstreamOrigin), kFactor: currentCalibrationFactor(session.stats, session.metadata?.lastModel), kOrigin: session.stats.calibratedEstimateOrigin, origin: upstreamOrigin, ledgerFloorTokens: dshLedgerFloorTokens(session.metadata) }, sessionId, log);
     // #532: title-gen side requests carry their own tiny system — skip them.
     if (!isTitleGen && googleOutboundSystem !== undefined) {
         session.metadata.systemPromptTokens = countSystemAndToolsTokens(googleOutboundSystem, toolsOut);

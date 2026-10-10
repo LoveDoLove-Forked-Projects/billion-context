@@ -1479,6 +1479,18 @@ export async function handle(
                 const shapeDrift = inboundMsgs !== null && inboundMsgs > DSH_COMPACTION_SHAPE_MSGS ? `, shape drifted from the ≤${DSH_COMPACTION_SHAPE_MSGS}-msg rc.1 envelope — rc.2 replays the full shadowed region (#2193)` : "";
                 log("warn", `[${session.id}] dsh native compaction call identified (final user message = COMPACTION_INSTRUCTION, ${inboundMsgs} msgs${shapeDrift}) — REFUSED, not forwarded: bili owns compression on this lane; a landed dsh checkpoint would durably shadow the raw history (#1729, cf. #1206/#1772)`);
             }
+            // #2490: remember the replayed envelope SIZE. The host's raw ledger is
+            // invisible to bili's folded view (folds never shrink what dsh itself
+            // counts), so the next turn's output clamp must plan against the raw
+            // scale or a monster output rides a small folded input out the door
+            // (the 384K-token/7.5MB turn-37 single-message kill chain). High-water
+            // mark, not a sum: the replay is the whole ledger every time, so the
+            // max already bounds every future re-send; a sum would compound on each
+            // retry. Consumed by dshLedgerFloorTokens() in budget.ts.
+            const prevBytes = typeof session.metadata["dshCompactionRefusedBytes"] === "number" ? session.metadata["dshCompactionRefusedBytes"] as number : 0;
+            session.metadata["dshCompactionRefusedBytes"] = Math.max(prevBytes, inboundBytes);
+            session.metadata["dshCompactionRefusals"] = (typeof session.metadata["dshCompactionRefusals"] === "number" ? session.metadata["dshCompactionRefusals"] as number : 0) + 1;
+            markDirty(session);
             const refusal = dshCompactionRefusal(protocol);
             if (!res.headersSent && !res.writableEnded && !res.destroyed) {
                 res.writeHead(refusal.status, { "content-type": "application/json" });
