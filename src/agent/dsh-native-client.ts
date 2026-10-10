@@ -28,7 +28,11 @@
 // and the frame height follows the host viewport. lang mirrors the host
 // locale: bind() resolves against the live dsh locale, and comparing the
 // resolved nav label with the registered zh value is the only locale signal
-// the client contract exposes. The same panel is mounted at two slots (#2125): settings.section
+// the client contract exposes. #2559: theme follows the HOST page too —
+// an app-level dsh dark setting is invisible to the framed document's
+// prefers-color-scheme, so we sample the actual on-screen ground of this page
+// (same-origin) and pin the face via &theme=light|dark; first paint reads it
+// synchronously, later probe ticks pick up mid-session toggles. The same panel is mounted at two slots (#2125): settings.section
 // (always present — the launcher posture has no bundle page) and
 // plugins.bundle.config (keyed by package name; the plugin detail page renders
 // it only when this package is installed as a profile bundle and draws the
@@ -86,6 +90,68 @@ const PAGE_KEYS: Record<PageId, string> = {
 };
 const EMBED_HEIGHT = "min(640px, 78vh)";
 
+/** #2559: classify the host page's actual ground as light/dark. The framed
+ *  bili face is a separate document — it only sees the browser/OS
+ *  color-scheme, while dsh's dark theme is app-level. Same origin lets us
+ *  sample what the user actually sees: walk the usual ground candidates,
+ *  read each opaque background-color, vote by simple weighted luminance
+ *  (near-black app grounds < 0.4, near-white > 0.4). No readable signal at
+ *  all ⇒ fall back to the OS signal; nothing even for that ⇒ undefined and
+ *  the frame stays OS-driven. Every read is guard-wrapped: older hosts or
+ *  minimal DOMs must degrade to "no pin", never crash the panel. */
+type ThemeDom = {
+    document?: { documentElement?: unknown; body?: { querySelector?: (sel: string) => unknown } & Record<string, unknown> };
+    getComputedStyle?: (el: unknown) => { backgroundColor?: unknown };
+    matchMedia?: (q: string) => { matches: boolean };
+};
+function detectHostTheme(): "light" | "dark" | undefined {
+    const g = globalThis as ThemeDom;
+    try {
+        const doc = g.document;
+        if (!doc || typeof g.getComputedStyle !== "function") return undefined;
+        const candidates: unknown[] = [];
+        if (doc.documentElement) candidates.push(doc.documentElement);
+        if (doc.body) candidates.push(doc.body);
+        try {
+            for (const sel of ["main", "[role=main]", "#root", "#app"]) {
+                const el = doc.body?.querySelector?.(sel);
+                if (typeof el === "object" && el !== null) candidates.push(el);
+            }
+        } catch {
+            // non-DOM harness: ground sampling below just yields no votes
+        }
+        let lightVotes = 0;
+        let darkVotes = 0;
+        for (const c of candidates) {
+            let bg: string;
+            try {
+                const v = g.getComputedStyle!(c).backgroundColor;
+                if (typeof v !== "string") continue;
+                bg = v;
+            } catch {
+                continue;
+            }
+            const m = /rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\/\s]+([\d.]+))?\)/.exec(bg);
+            if (!m) continue; // transparent / named / unparsable → no vote
+            const alpha = m[4] !== undefined ? Number(m[4]) : 1;
+            if (alpha <= 0.5) continue;
+            const luma = (0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3])) / 255;
+            if (luma <= 0.4) darkVotes += 1;
+            else lightVotes += 1;
+        }
+        if (darkVotes !== lightVotes && (darkVotes > 0 || lightVotes > 0)) return darkVotes > lightVotes ? "dark" : "light";
+    } catch {
+        return undefined;
+    }
+    try {
+        const mq = g.matchMedia?.("(prefers-color-scheme: dark)");
+        if (mq) return mq.matches ? "dark" : "light";
+    } catch {
+        // no media support either — leave the face OS-driven
+    }
+    return undefined;
+}
+
 const zh: Dict = {
     "nav": "bili设置",
     "title": "billion-context 压缩代理",
@@ -125,8 +191,12 @@ function openExternal(url: string): void {
  *  of the mount; returns the cancel used as the effect cleanup (no fetch ⇒
  *  no-op, older hosts without the route simply stay on the snapshot or
  *  degrade). The snapshot is only a first-paint hint — the host re-binds the
- *  origin at runtime, so polling never stops after a resolution. */
-function probeOrigin(onOrigin: (origin: string) => void): () => void {
+ *  origin at runtime, so polling never stops after a resolution.
+ *  #2559: every successful tick also re-classifies the host ground and pushes
+ *  a fresh theme pin — mid-session theme toggles land within one slow phase.
+ *  No extra timers are scheduled here (the test pins in tests/dsh-settings-ui
+ *  count every delay on this queue). */
+function probeOrigin(onOrigin: (origin: string) => void, onTheme?: (theme: "light" | "dark") => void): () => void {
     if (typeof fetch !== "function") return () => {};
     let cancelled = false;
     let settled = false;
@@ -140,6 +210,10 @@ function probeOrigin(onOrigin: (origin: string) => void): () => void {
                 if (typeof data.origin === "string" && data.origin.length > 0 && !cancelled) {
                     onOrigin(data.origin);
                     settled = true;
+                }
+                if (onTheme) {
+                    const theme = detectHostTheme();
+                    if (theme !== undefined) onTheme(theme);
                 }
             }
         } catch {
@@ -171,9 +245,12 @@ export function apply(ctx: ClientContext): void {
     const panel = (titled: boolean): ((props: Record<string, unknown>) => unknown) => () => {
         const [origin, setOrigin] = useState<string | undefined>(readOrigin());
         const [page, setPage] = useState<PageId>("overview");
+        // #2559: synchronous first paint — the very first render already pins
+        // the palette to the host's current ground (no wrong-scheme flash).
+        const [theme, setTheme] = useState<("light" | "dark") | undefined>(detectHostTheme);
         // #2288: no guard on the snapshot — the live route is authoritative
         // for the whole mount, so a stale boot value is corrected in place.
-        useEffect(() => probeOrigin(setOrigin), []);
+        useEffect(() => probeOrigin(setOrigin, setTheme), []);
         const lang = t("nav") === zhDict.nav ? "zh" : "en";
         return createElement(
             "div",
@@ -212,7 +289,7 @@ export function apply(ctx: ClientContext): void {
                         ),
                     ),
                     createElement("iframe", {
-                        src: `${origin}/__bili/?embed=1&lang=${lang}#/${page}`,
+                        src: `${origin}/__bili/?embed=1&lang=${lang}${theme ? `&theme=${theme}` : ""}#/${page}`,
                         title: t("title"),
                         style: {
                             display: "block",

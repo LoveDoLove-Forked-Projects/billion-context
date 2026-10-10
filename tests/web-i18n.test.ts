@@ -162,6 +162,21 @@ test("#2321: embed mode marks the body for chrome-less framing", () => {
     assert.ok(embedded.includes('<body class="embed">'), "embed flag marks the body");
 });
 
+test("#2559: renderPage pins an explicit theme on <html> only when given", () => {
+    // The dsh client appends &theme=light|dark when its own page ground
+    // disagrees with (or pre-empts) the OS signal; the pin rides on <html>
+    // so styles.ts can scope both the palette and color-scheme to it.
+    const dark = renderPage("http://127.0.0.1:8787", "0.0.0-test", true, "dark");
+    assert.ok(dark.includes('<html lang="zh-CN" data-theme="dark">'), "dark pin lands on <html>");
+    const light = renderPage("http://127.0.0.1:8787", "0.0.0-test", false, "light");
+    assert.ok(light.includes('<html lang="zh-CN" data-theme="light">'), "light pin lands on <html>");
+    const unpinned = renderPage("http://127.0.0.1:8787", "0.0.0-test", true);
+    assert.ok(
+        unpinned.startsWith('<!doctype html><html lang="zh-CN"><head>'),
+        "no pin keeps the plain <html> element (CSS may mention data-theme)",
+    );
+});
+
 test("#1024: embedded client parses and persists the language choice", () => {
     assert.doesNotThrow(() => new Function(WEB_CLIENT));
     assert.match(WEB_CLIENT, /bili-language/);
