@@ -72,7 +72,7 @@ import {
     type GoogleSystemInstruction,
     type GoogleTool,
 } from "acp-kernel/wire";
-import { ABSORB_TOOL_NAME, COMPRESS_TOOL, BILI_ACP_TOOLS_ANTHROPIC, BILI_ACP_TOOLS_ANTHROPIC_NO_RANGE, BILI_ACP_TOOLS_GOOGLE, BILI_ACP_TOOLS_GOOGLE_NO_RANGE, BILI_ACP_TOOLS_OPENAI, BILI_ACP_TOOLS_OPENAI_NO_RANGE, BILI_ACP_TOOLS_RESPONSES, BILI_ACP_TOOLS_RESPONSES_NO_RANGE, BILI_ACP_READONLY_TOOLS_RESPONSES, BILI_ACP_READONLY_TOOLS_RESPONSES_NO_RANGE, COMPRESS_TOOL_NAME, IMAGE_FULL_TOOL, IMAGE_FULL_TOOL_GOOGLE, IMAGE_FULL_TOOL_OPENAI, IMAGE_FULL_TOOL_RESPONSES, RULE_TOOL, RULE_TOOL_GOOGLE, RULE_TOOL_OPENAI, RULE_TOOL_RESPONSES, absorbToolsFor, retrieveToolsFor, buildAcpTagsOnlyPrompt, withStagedCompressGuidance } from "./compress-tool.js";
+import { ABSORB_TOOL_NAME, COMPRESS_TOOL, BILI_ACP_TOOLS_ANTHROPIC, BILI_ACP_TOOLS_ANTHROPIC_NO_RANGE, BILI_ACP_TOOLS_GOOGLE, BILI_ACP_TOOLS_GOOGLE_NO_RANGE, BILI_ACP_TOOLS_OPENAI, BILI_ACP_TOOLS_OPENAI_NO_RANGE, BILI_ACP_TOOLS_RESPONSES, BILI_ACP_TOOLS_RESPONSES_NO_RANGE, BILI_ACP_READONLY_TOOLS_RESPONSES, BILI_ACP_READONLY_TOOLS_RESPONSES_NO_RANGE, COMPRESS_TOOL_NAME, IMAGE_FULL_TOOL, IMAGE_FULL_TOOL_GOOGLE, IMAGE_FULL_TOOL_OPENAI, IMAGE_FULL_TOOL_RESPONSES, RULE_TOOL, RULE_TOOL_GOOGLE, RULE_TOOL_OPENAI, RULE_TOOL_RESPONSES, absorbToolsFor, retrieveToolsFor, buildAcpTagsOnlyPrompt } from "./compress-tool.js";
 import { absorbEnabled, storeEffectiveAbsorb } from "./absorb.js";
 import { ccrEnabled, ccrLoopConfig, ccrPluginWireOk, contentStoreOf, executeRetrieve, pruneExpiredRetrievals, reconcileReloadedRetrievals, renderRetrievalNotes, retrieveToolName, snapshotPendingRetrievals, snapshotRetrievalNotes, storeEffectiveCcr, type CcrSettings } from "./store.js";
 import { buildIncomingImageIndex, foldAnchoredCutoff, pruneRetrieveImgExports } from "./image-restore.js";
@@ -1128,6 +1128,13 @@ export type Prepared = {
      *  rate_limit_error "Error" (#2189). See extractBillingAttributionBlock. */
     anthropicBillingBlock?: { type: "text"; text: string };
     anthropicCacheMarks?: Map<string, { type: "ephemeral" }>;
+    /** #2499: the client's own harvested message-level cache_control breakpoints
+     *  (keyed by content-hash id), returned verbatim by the steady path. The
+     *  round-2 rebuild applies `anthropicCacheMarks ?? anthropicClientCacheControls`
+     *  exactly like the steady path — a client-managed session (no bili marks)
+     *  must re-stamp its own breakpoint on the trigger turn or the post-fold
+     *  prefix is never written to the prefix cache. */
+    anthropicClientCacheControls?: Map<string, unknown>;
     /** Original leading system/developer prefix text captured by the kernel's
      *  openai hoist (0.0.37). The fold space no longer carries it, so every
      *  rebuilt payload and compress-loop round must re-inject it. */

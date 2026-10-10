@@ -119,6 +119,12 @@ export const MESSAGES: Record<Locale, Record<string, string>> = {
         "conflict.on_suspected": "检测到疑似压缩插件",
         "conflict.what_suspected": "名称含压缩关键词的插件（尚未确认其是否真的压缩上下文）",
         "conflict.risk_suspected": "——这仅是按名称关键词匹配的【疑似】信号，不是已观察到的双压缩证据。请确认其是否真的改写发给模型的上下文；只改终端显示 / 折叠工具输出的插件（如 pi-compact-transcript）不会双压缩、无需移除。",
+        // #2545: unconfirmed-signal tier — observed history changes whose cause is NOT
+        // identified (unannounced rewrites, orphan reaps) must never be presented as a
+        // confirmed second compressor or attributed to native auto-compaction.
+        "conflict.on_unconfirmed": "检测到未确认的压缩相关信号",
+        "conflict.what_signal": "会话历史被改写的痕迹（观察到变化，原因未确认）",
+        "conflict.risk_unconfirmed": "。这些只是【未确认】信号，不能证明存在第二个压缩器——原因可能是客户端自身改动、未被识别的压缩形态或其他插件。请核实后再行动；只读上下文查看器、仅改终端显示/折叠工具输出的插件不是压缩器，无需移除。",
         // #2324: the age split describes record recency, not whether a plugin is running now.
         "conflict.age_active": "近 7 天 {n} 条",
         "conflict.age_historical": "更早 {n} 条",
@@ -152,6 +158,9 @@ export const MESSAGES: Record<Locale, Record<string, string>> = {
         "alert.hint.unknown": "未分类的传输层故障——请附完整错误链反馈",
         "advisory.restartDesc": "：安全版本已安装到磁盘，但当前进程仍在运行受影响版本。原因：",
         "advisory.restartHint": "。重启 bili 后生效。",
+        "pluginadv.on": "检测到高成本插件",
+        "pluginadv.desc": "该插件会在每次工具调用前把整段会话重新发送给模型做审查，导致上游前缀缓存几乎无法复用（缓存命中率常只有个位数百分比），显著增加 token 成本。这与 bili 的压缩无关——bili 已把它隔离到独立子会话，主会话的前缀缓存不受影响。",
+        "pluginadv.hint": "建议关闭该插件或联系其官方优化；详情见上方链接（本 issue）。",
         "ses.title": "会话",
         "ses.sub": "覆盖内存与磁盘的全部会话 · 点击行查看详情、轨迹与交接文档",
         "ses.search_ph": "搜索标题、标签或 id…",
@@ -533,6 +542,10 @@ export const MESSAGES: Record<Locale, Record<string, string>> = {
         "conflict.on_suspected": "Possible compression plugin detected",
         "conflict.what_suspected": "a plugin whose name matches compression keywords (not yet verified to actually compress context)",
         "conflict.risk_suspected": " — a name-only [suspected] signal, not observed evidence of double-compression. Confirm it actually rewrites the model context before acting; a display / tool-output-folding plugin (e.g. pi-compact-transcript) does not double-compress and needs no removal.",
+        // #2545: see the zh entries above — unconfirmed signals never presented as a confirmed compressor.
+        "conflict.on_unconfirmed": "Unconfirmed compression-related signals detected",
+        "conflict.what_signal": "conversation history being rewritten (a change was observed, cause not yet identified)",
+        "conflict.risk_unconfirmed": " — all of the above are UNCONFIRMED signals: they do not prove a second compressor exists (possible causes: client-side edits, an unrecognized compaction shape, or another plugin). Verify before acting; a read-only context viewer or a display / tool-output-folding plugin is not a compressor and needs no removal.",
         // #2324: age split = record recency, not whether a plugin is running now.
         "conflict.age_active": "{n} in last 7 days",
         "conflict.age_historical": "{n} older",
@@ -566,6 +579,9 @@ export const MESSAGES: Record<Locale, Record<string, string>> = {
         "alert.hint.unknown": "unclassified transport failure — report with full error chain",
         "advisory.restartDesc": ": the safe version is installed on disk, but this process is still running the affected version. Reason:",
         "advisory.restartHint": ". Restart bili to activate it.",
+        "pluginadv.on": "High-cost plugin detected",
+        "pluginadv.desc": "This plugin re-sends the entire conversation to the model before every tool call for review, so the upstream prefix cache almost never applies (hit rate usually single-digit %) and token cost grows sharply. This is unrelated to bili's compression: bili isolates such requests into a separate sub-session, leaving the main session's prefix cache intact.",
+        "pluginadv.hint": "Consider disabling the plugin or asking its maintainers to optimize it; details in the link above (this issue).",
         "ses.title": "Sessions",
         "ses.sub": "Every session across memory and disk — click a row for details, trajectory & handoff document",
         "ses.search_ph": "Search title, label or id…",

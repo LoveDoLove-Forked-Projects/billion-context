@@ -208,7 +208,11 @@ describe("reconcileFoldCoverage (#1921)", () => {
         const churned = originals.map((m, i) => (i === 4 ? msg("a4-new", "user", "stable context  words 4\r\n") : m));
         const result = reconcileFoldCoverage(session, churned, opts("repair"));
         assert.equal(result.kind, "reanchored");
-        assert.equal(result.byNorm, 1);
+        // whitespace-only churn now claims POSITIONALLY (#2487 prose
+        // normalization: canon equal after NFC/CR→LF/space-collapse, so Pass 0
+        // pairs it; the norm pass no longer needs to)
+        assert.equal(result.byPos, 1);
+        assert.equal(result.byNorm, 0);
         const rewritten = allIds.map((id, i) => (i === 4 ? "a4-new" : id));
         assert.deepEqual(session.state.blocks[0].effectiveMessageIds, rewritten);
         assert.deepEqual(session.state.blocks[0].directMessageIds, rewritten);
@@ -626,7 +630,7 @@ describe("reconcileFoldCoverage anchor cap boundary (#2334)", () => {
         const snapshot = JSON.stringify(session.metadata);
         resetNormalizedIdentityWork();
         const second = reconcileFoldCoverage(session, msgs, opts);
-        assert.deepEqual(second, { kind: "resend", missing: 0, claims: 0, byTool: 0, byNorm: 0, unmatched: 0 });
+        assert.deepEqual(second, { kind: "resend", missing: 0, claims: 0, byPos: 0, byTool: 0, byNorm: 0, unmatched: 0 });
         assert.equal(normalizedIdentityWorkCount(), 0,
             "the overflow tail must not be normalized+hashed and dropped AGAIN every pass (#2334)");
         assert.equal(JSON.stringify(session.metadata), snapshot, "steady-state resend leaves metadata byte-stable");
@@ -683,6 +687,11 @@ describe("reconcileFoldCoverage anchor cap boundary (#2334)", () => {
         churned.push(msg("b9", "assistant", "bookend nine"));
         const session = capSession(originals.map((m) => m.id!));
         reconcileFoldCoverage(session, originals, opts);
+        // #2487 prose normalization makes whitespace churn positionally
+        // claimable, which would route ALL 8 middles through Pass 0; drop the
+        // stored copy so this test keeps exercising the tool/norm passes and
+        // their #2334 lazy-norm accounting (the no-copy fallback path).
+        delete (session.metadata as Record<string, unknown>).foldPositions;
 
         resetNormalizedIdentityWork();
         const result = reconcileFoldCoverage(session, churned, opts);
@@ -739,7 +748,7 @@ describe("rewrite-suspect detection (#2396)", () => {
     }
     const errorLines = (logs: LogLine[]) => logs.filter((l) => l.level === "error");
 
-    test("provider-switch rewrite: 10 unmatched pairs stay unrepaired, named in logs, escalate once", () => {
+    test("provider-switch rewrite (#2396 shape): identical-content twins under rewritten tool-call ids are repaired positionally (#2480)", () => {
         const ids = ["b0", ...Array.from({ length: 10 }, (_, i) => `t${i + 1}`), "b9"];
         const originals: CoreMessage[] = [msg("b0", "user", "bookend zero")];
         for (let i = 1; i <= 10; i++) originals.push(msg(`t${i}`, "tool_result", `tool payload ${i}`, { toolCallId: `call_${i}|raw`, toolName: "probe" }));
@@ -748,7 +757,7 @@ describe("rewrite-suspect detection (#2396)", () => {
             state: { blocks: [{ active: true, effectiveMessageIds: [...ids] }] },
             metadata: {},
         } as unknown as Session;
-        reconcileFoldCoverage(session, originals, makeOpts([])); // seed anchors + order
+        reconcileFoldCoverage(session, originals, makeOpts([])); // seed anchors + order + positional copy
 
         const rewritten = (): CoreMessage[] => [
             msg("b0", "user", "bookend zero"),
@@ -759,39 +768,30 @@ describe("rewrite-suspect detection (#2396)", () => {
         const logs: LogLine[] = [];
         resetNormalizedIdentityWork();
         const first = reconcileFoldCoverage(session, rewritten(), makeOpts(logs));
-        assert.equal(first.kind, "unmatched");
-        assert.equal(first.unmatched, 10);
-        assert.equal(first.claims, 0);
+        // #2480: the old detection-only stance assumed pairing without host
+        // knowledge would be guessing — but position + canonical fingerprint
+        // IS host knowledge: same index, identical content, only the id scheme
+        // rewritten. Every pair is claimed; nothing escalates.
+        assert.equal(first.kind, "reanchored");
+        assert.equal(first.byPos, 10);
+        assert.equal(first.unmatched, 0);
         assert.equal(normalizedIdentityWorkCount(), 20,
-            "10 pass-2 candidate norms + 10 no-tool witness norms; anchor reuse pays 0");
-        // The first drift pass is the EVIDENCE pass: it rolls the order
-        // backbone onto the rewritten ids, so later passes find the missing
-        // ids outside the aligned region — zero work, region-bounded detection
-        // (#2334 discipline: steady/drift state must stay near-free).
-        const firstWarn = logs.find((l) => l.level === "warn");
-        assert.ok(firstWarn !== undefined, "first drift pass logs the per-pass warn");
-        assert.match(firstWarn.msg, /10 of them have an inbound twin with identical normalized content under a different toolCallId/);
-        assert.match(firstWarn.msg, /#2396/);
-
-        for (let pass = 2; pass <= 3; pass++) {
-            resetNormalizedIdentityWork();
-            const result = reconcileFoldCoverage(session, rewritten(), makeOpts(logs));
-            assert.equal(result.kind, "unmatched");
-            assert.equal(result.unmatched, 10);
-            assert.equal(normalizedIdentityWorkCount(), 0, "rolled backbone: empty region, no norms paid");
-        }
+            "zero candidate norms (all claims are positional); 2 per re-seeded tool anchor (n + m)");
         assert.deepEqual(
             (session.state.blocks[0] as { effectiveMessageIds: string[] }).effectiveMessageIds,
-            ids,
-            "detection only — the fold must never rewrite onto guessed pairings");
-        assert.equal(errorLines(logs).length, 1, "third consecutive total-loss pass escalates once");
-        const err = errorLines(logs)[0];
-        assert.match(err.msg, /substrate appears destroyed/);
-        // The evidence window closed with the backbone roll, so the escalation
-        // error must NOT claim rewrite suspects it cannot see on its own pass —
-        // the cause lives in the first drift warn above (honest-output rule).
-        assert.doesNotMatch(err.msg, /host-rewritten tool-call ids/);
-        assert.equal(logs.filter((l) => l.level === "warn").length, 2, "passes 1-2 warn; pass 3 is the single error line");
+            ["b0", ...Array.from({ length: 10 }, (_, i) => `t${i + 1}-rw`), "b9"],
+            "fold coverage survives the provider switch (the #2396 death spiral, closed)");
+        assert.equal(errorLines(logs).length, 0, "nothing escalates — the drift was repaired, not destroyed");
+        const firstInfo = logs.filter((l) => l.level === "info");
+        assert.equal(firstInfo.length, 1, "the repair pass logs one reanchor line");
+        assert.match(firstInfo[0].msg, /reanchored 10 \(10 positional/);
+        // steady state after the repair: zero work, no drift lines
+        resetNormalizedIdentityWork();
+        const second = reconcileFoldCoverage(session, rewritten(), makeOpts(logs));
+        assert.equal(second.kind, "resend");
+        assert.equal(normalizedIdentityWorkCount(), 0);
+        assert.equal(logs.length, 1, "steady pass adds nothing — the only line is the repair notice above");
+        assert.equal(errorLines(logs).length + logs.filter((l) => l.level === "warn").length, 0);
     });
 
     test("v0 anchors backfill their no-tool norm while bytes are still on the wire", () => {
