@@ -197,9 +197,11 @@ Where a client has its own plugin channel you can also install natively,
 skipping bili commands entirely:
 
 - **dsh:** `dsh plugin --profile <name> add billion-context` is the very
-  command `bili plugin install dsh` drives per profile — same end state
-  either way (pnpm into the profile, bundled patch layer mounted by dsh
-  itself); remove through the same channel. See the dsh section below.
+  command `bili plugin install dsh` drives per profile (npm form only; a git
+  checkout has no published entry — pasting a GitHub address installs source
+  without `dist/` and the bundle never loads) — same end state either way
+  (pnpm into the profile, bundled patch layer mounted by dsh itself); remove
+  through the same channel. See the dsh section below.
 - **opencode:** add the bare npm name to your real config's plugin list —
   `"plugin": ["billion-context"]` (npm form only; a git checkout has no
   published entry). The package publishes `exports["./server"]` →

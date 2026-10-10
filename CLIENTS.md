@@ -37,7 +37,10 @@ Two lanes, same plugin (#941):
   (round 1 rides wire mode). Opt-out: `BILI_NATIVE_DSH=0`. Remove with
   `bili plugin remove dsh` or `dsh plugin --profile <name> remove
   billion-context` — both go through the same channel. Registry installs
-  require a published release that carries `dsh.bundle.patch.yml`. If dsh
+  require a published release that carries `dsh.bundle.patch.yml`; use the
+  npm form — a GitHub source address installs source without `dist/` (the
+  entry points dangle and dsh silently skips the bundle; the install-time
+  guard fails loudly instead, #2471). If dsh
   fails to boot right after an add with `ERR_MODULE_NOT_FOUND` on
   `billion-context/dsh`, the profile resolved a pre-bundle copy from a stale
   package-metadata cache (#953) — re-add pinned: `dsh plugin --profile
