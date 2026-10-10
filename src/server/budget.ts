@@ -249,6 +249,17 @@ export function clampOutputBudget(requested: number, inputEstimate: number, nati
     return cap;
 }
 
+/** #2490: translate the refused dsh compaction replay size (recorded on the
+ *  session by the guard in handle.ts) into a token floor for the clamp's
+ *  planning basis. bytes/4 mirrors the default estimator's chars/4 caliber
+ *  (the replay is JSON text riding the same wires). 0 when nothing was
+ *  recorded — legacy behavior. */
+export function dshLedgerFloorTokens(metadata: Record<string, unknown> | undefined | null): number {
+    const bytes = metadata?.["dshCompactionRefusedBytes"];
+    if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes <= 0) return 0;
+    return Math.ceil(bytes / 4);
+}
+
 // Only override genuine cadence silences — never the kernel's deliberate
 // "nothing worth offering" suppressions. #2104: that includes the NON-empty
 // kind: decideNudge suppresses while compressibleRanges still carries the raw
@@ -279,6 +290,14 @@ export function clampOutgoingOutput(
      *  window the overflow boundary lies BELOW the headroom target, so capping
       *  against it would no-op exactly when post-compression turns need the
       *  guarantee most (#453). */ headroomWindow?: number;
+     /** #2490: floor for the PLANNING input when the host (dsh native compaction)
+     *  keeps a raw ledger bili's folded view cannot see. The guard's refusals
+     *  record the replayed envelope size on the session; that ledger will be
+     *  re-sent whole after this turn (and after every turn — the compaction
+     *  never lands), so a turn planned only against the folded input invites
+     *  output-sized overhang the next raw replay cannot survive. Raising the
+     *  planning basis only ever tightens the cap (fail-closed direction). */
+    ledgerFloorTokens?: number;
      /** #2122/#1933 F1: per-route estimator calibration — scales the local-est
       *  side of estimateInputTokens so the clamp judges the payload on the same
       *  provider-billed scale as preflight/nudge. Absent → legacy raw behavior. */ kFactor?: number; kOrigin?: string; origin?: string },
@@ -294,14 +313,20 @@ export function clampOutgoingOutput(
     // reserve) caliber as preflight/metering instead of double-counting every image.
     const loadedToolTokens = field === "max_output_tokens" ? countLoadedToolTokens(rebuilt) : 0;
     const inputEstimate = estimateInputTokens(ctx.processedMessages, ctx.systemText, ctx.tools, ctx.lastInputTokens, ctx.lastInputTokensSource, ctx.kFactor, ctx.kOrigin, ctx.origin, loadedToolTokens, ctx.imageTokens);
-    const capped = clampOutputBudget(raw, inputEstimate, ctx.nativeWindow);
+    // #2490: judge headroom against the larger of the folded view and the refused
+    // raw ledger — see ctx.ledgerFloorTokens. Keeps the shape of estimateInputTokens'
+    // internal max() (usage baseline never scales DOWN), so all three calibers stay
+    // conservative in the same direction.
+    const ledgerFloor = typeof ctx.ledgerFloorTokens === "number" && Number.isFinite(ctx.ledgerFloorTokens) ? Math.max(0, Math.floor(ctx.ledgerFloorTokens)) : 0;
+    const planningInput = Math.max(inputEstimate, ledgerFloor);
+    const capped = clampOutputBudget(raw, planningInput, ctx.nativeWindow);
     if (capped !== undefined) {
         writeOutputBudget(rebuilt, field, capped);
         // #2096: in the band (headroom target, native window) the clamp can only
         // guarantee native-window fit — preflight/compression is what can pull
         // the input back under the enforced target. Say so instead of advertising
         // rescue right before the turn dies.
-        const overTarget = ctx.headroomWindow !== undefined && ctx.headroomWindow < ctx.nativeWindow && inputEstimate >= ctx.headroomWindow;
-        log("info", `[${sessionId}] output budget clamped ${raw} -> ${capped} (input~${inputEstimate}, window=${ctx.nativeWindow}); prevents input+output overflow (#453)${overTarget ? `; input already exceeds the headroom-adjusted target ~${ctx.headroomWindow} that nudge/preflight enforce — only compression can recover it, this clamp guarantees native-window fit only (#2096)` : ""}`);
+        const overTarget = ctx.headroomWindow !== undefined && ctx.headroomWindow < ctx.nativeWindow && planningInput >= ctx.headroomWindow;
+        log("info", `[${sessionId}] output budget clamped ${raw} -> ${capped} (input~${inputEstimate}${ledgerFloor > inputEstimate ? `, planning floor ${ledgerFloor} from the refused dsh compaction replay (#2490)` : ""}, window=${ctx.nativeWindow}); prevents input+output overflow (#453)${overTarget ? `; input already exceeds the headroom-adjusted target ~${ctx.headroomWindow} that nudge/preflight enforce — only compression can recover it, this clamp guarantees native-window fit only (#2096)` : ""}`);
     }
 }
