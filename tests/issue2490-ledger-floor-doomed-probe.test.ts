@@ -275,33 +275,34 @@ test("e2e #2490 a: the guard records the refused replay SIZE on the session (hig
 // ---------------------------------------------------------------------------
 // (b) doomed probe
 
-test("e2e #2490 b: core text beyond window×7.5 bytes fails fast instead of paying the probe 400", async () => {
+test("e2e #2490 b: multi-MB core text beyond both doom bars fails fast instead of paying the probe 400", async () => {
     const { ctx, calls, close } = await setup();
     try {
         await seedStuckMeter(ctx, "s-2490-b");
 
-        // 40 msgs × 4.4K chars ≈ 176KB of ASCII core text vs the 150KB
-        // (20K window × 7.5 B/token) bar: mathematically doomed — no tokenizer
-        // observed on a live route compresses denser than ~6.8 B/token.
-        const r = await post(ctx, bigMessages(40, 4_400));
+        // 500 msgs × 4.4K chars ≈ 2.2MB of ASCII core text — past the absolute
+        // 2MB bar (and the 20K window × 7.5 B/token = 150KB ratio bar).
+        const r = await post(ctx, bigMessages(500, 4_400));
         assert.equal(r.status, 502, "doomed probe fails fast, not forwarded");
         const body = await r.text();
-        assert.match(body, /~17[67]\d{3} bytes/, "the byte math is in the operator-facing message");
+        assert.match(body, /~22\d{5} bytes/, "the byte math is in the operator-facing message");
         assert.match(body, /NOT forwarded even for evidence/, "the remedy wording is present");
 
-        assert.ok(calls.length === 1 && calls[0]!.contentChars < 50_000, `only the seed turn reached the upstream (calls=${JSON.stringify(calls.map((c) => c.contentChars))}) — never the 176KB payload`);
+        assert.ok(calls.length === 1 && calls[0]!.contentChars < 50_000, `only the seed turn reached the upstream (calls=${JSON.stringify(calls.map((c) => c.contentChars))}) — never the 2.2MB payload`);
     } finally {
         await close();
     }
 });
 
-test("e2e #2490 c: an experiment-sized payload still probes (control — #2313 behavior preserved)", async () => {
+test("e2e #2490 c: an experiment-sized payload still probes (control — #2313/#1001 behavior preserved)", async () => {
     const { ctx, calls, close } = await setup();
     try {
         await seedStuckMeter(ctx, "s-2490-c");
 
-        // 30 msgs × 4.4K chars ≈ 132KB < 150KB bar: the bet is still worth one
-        // request — the probe forwards exactly as before the guard existed.
+        // 30 msgs × 4.4K chars ≈ 132KB: over the ratio bar for a 20K window but
+        // well under the absolute 2MB floor — dense-but-legal payloads keep the
+        // probe (the #1001 rewrite test rides the same shape). The bet is still
+        // worth one request.
         const r = await post(ctx, bigMessages());
         assert.equal(r.status, 200, "probe forward reaches the upstream");
         await r.text();
