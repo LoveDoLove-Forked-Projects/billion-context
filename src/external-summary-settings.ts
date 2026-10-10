@@ -73,7 +73,7 @@ function text(value: unknown, limit: number): string {
     return value.trim();
 }
 
-const AUTO_FOLD_TARGET_MIN = 8_192;
+export const AUTO_FOLD_TARGET_MIN = 8_192;
 const AUTO_FOLD_TARGET_MAX = 10_000_000;
 
 /** [#autoFold] Both parsers share the exact switch/target semantics: the

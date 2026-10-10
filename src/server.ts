@@ -80,6 +80,7 @@ import { imageCompressionEnabled, storeEffectiveImageCompression, type ImageComp
 import { rulesEnabled, storeEffectiveRules } from "./rules-feature.js";
 import { storeEffectiveSearchPlanAware } from "./decompress-shared.js";
 import { armAutoFoldBackoff, autoFoldEngaged, AUTO_FOLD_BACKOFF_MS, withExternalSummaryTools } from "./external-summary-surface.js";
+import { AUTO_FOLD_TARGET_MIN } from "./external-summary-settings.js";
 import { applyRanges } from "./stream.js";
 import { attachSubagentSessions } from "./subagent-sessions.js";
 import { buildSessionCacheReport, handleAcpCache, learnedImageReserve, noteClientAbort, readKeySwitchStats, readModelSwitchStats, settleUsageReport } from "./cache-ledger.js";
@@ -2387,8 +2388,13 @@ export async function preflightCompressIfNeeded(
     // overflow concept — a growth-armed payload still fits the real window,
     // so failures forward as-is instead of refusing the request.
     const autoFoldOn = autoFoldEngaged(config, session);
+    // The implicit half-window default must respect the documented
+    // [8192, 10M] target range too: a window below ~16K would otherwise arm a
+    // floor under the documented minimum. Clamping to the minimum disarms
+    // auto-fold on sub-8K windows outright (target >= overflow ⇒ growthArmed
+    // false), which matches the documented feature scope.
     const autoFoldTarget = autoFoldOn
-        ? Math.min((config as ResolvedKernelConfig).externalSummary?.autoFoldTargetTokens ?? (overflowTarget > 0 ? Math.round(overflowTarget / 2) : 0), overflowTarget)
+        ? Math.max(AUTO_FOLD_TARGET_MIN, Math.min((config as ResolvedKernelConfig).externalSummary?.autoFoldTargetTokens ?? (overflowTarget > 0 ? Math.round(overflowTarget / 2) : 0), overflowTarget))
         : undefined;
     const growthArmed = autoFoldTarget !== undefined && autoFoldTarget > 0 && autoFoldTarget < overflowTarget;
     const compressionTarget = growthArmed ? autoFoldTarget : overflowTarget;
@@ -2763,7 +2769,19 @@ export async function preflightCompressIfNeeded(
     } else if (unknownBaseline
         ? result.fitsWindow
         : estimateCoreMessages(prepared.processedMessages) + overheadEstimate + imageTokens < limit) {
-        log("warn", `[${session.id}] preflight made no progress but the payload fits; forwarding as-is`);
+        // [#autoFold] A growth-armed payload fits the real window by definition,
+        // so a zero-progress fold is not an error — but it does mean the chain
+        // could not deliver at all. Arm the cooldown right here (the arm branch
+        // below is unreachable from this path — it sits after this return) so
+        // classic nudges resume instead of re-attempting the dead chain every
+        // turn.
+        if (growthArmed && payloadFitsWindow) {
+            log("warn", `[${session.id}] auto-fold made no progress (0 range(s) folded) — forwarding as-is (payload fits the model window ${limit}); backing off auto-fold for ${Math.round(AUTO_FOLD_BACKOFF_MS / 60_000)}m so classic nudges resume`);
+            armAutoFoldBackoff(session);
+            markDirty(session);
+        } else {
+            log("warn", `[${session.id}] preflight made no progress but the payload fits; forwarding as-is`);
+        }
         return prepared;
     }
     const f = result.failure;
