@@ -26,10 +26,25 @@ export function selfBuildableCheckout(dir) {
     return existsSync(path.join(dir, ".git"));
 }
 
+// npm runs a git dependency's prepare inside its cached clone, which KEEPS
+// .git (measured in review on npm 10.9.8/pacote: prepare executes in
+// _cacache/tmp/git-clone*, hasGit=true, exit 0, dangling entries) — so the
+// .git marker alone cannot catch the npm lane. What separates it from a dev
+// checkout is npm_config_local_prefix: npm points it at the CONSUMING
+// install's root (the project or the -g prefix), never at the cloned
+// package itself (#2471 review F2).
+function sameDir(a, b) {
+    const norm = (p) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+    return norm(a) === norm(b);
+}
+
 export function distReadyVerdict(state) {
     if (state.distReady) return { ok: true, reason: "dist/ is present" };
     if (state.npmCommand === "pack" || state.npmCommand === "publish") {
         return { ok: false, reason: "packing/publishing requires a built dist/ — run npm run build first" };
+    }
+    if (state.localPrefix !== undefined && state.root !== undefined && !sameDir(state.localPrefix, state.root)) {
+        return { ok: false, reason: "installed as a dependency from source — this copy belongs to a consuming install and has no loadable entry" };
     }
     if (state.selfBuildable) return { ok: true, reason: "dev checkout without dist/ — build it with npm run build" };
     return { ok: false, reason: "source install without dist/ — main/bin/exports all point into dist/, so the package has no loadable entry" };
@@ -44,6 +59,8 @@ if (isMain) {
         distReady: distEntryReady(root),
         selfBuildable: selfBuildableCheckout(root),
         npmCommand: process.env.npm_command,
+        localPrefix: process.env.npm_config_local_prefix,
+        root,
     });
     if (!verdict.ok) {
         console.error(`dist-ready: FAIL — ${verdict.reason}.`);
