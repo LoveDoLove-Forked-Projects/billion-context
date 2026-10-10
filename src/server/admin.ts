@@ -182,8 +182,13 @@ export async function handleAdminRoute(req: http.IncomingMessage, res: http.Serv
     if (req.method === "GET" && req.url !== undefined && (req.url === "/__bili/" || req.url.startsWith("/__bili/?"))) {
         const u = new URL(req.url, "http://localhost");
         const origin = `http://${opts.host === "0.0.0.0" ? "localhost" : opts.host}:${opts.port}`;
+        // #2559: embedding hosts pin the face's palette explicitly (?theme=
+        // light|dark) because app-level host themes are invisible to the
+        // framed document's prefers-color-scheme.
+        const rawTheme = u.searchParams.get("theme");
+        const theme = rawTheme === "light" || rawTheme === "dark" ? rawTheme : undefined;
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderUI(origin, { embed: u.searchParams.get("embed") === "1" }));
+        res.end(renderUI(origin, { embed: u.searchParams.get("embed") === "1", theme }));
         return;
     }
     if (req.method === "GET" && req.url === "/__bili/config") return handleConfigGet(res);
